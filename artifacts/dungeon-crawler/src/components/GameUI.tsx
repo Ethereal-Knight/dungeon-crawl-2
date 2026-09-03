@@ -207,21 +207,29 @@ export function GameUI() {
         </div>
       </div>
 
-      {/* Touch Controls - Bottom */}
-      <div className="p-8 flex justify-end items-end pb-12 w-full max-w-5xl mx-auto pointer-events-none">
-        {/* Action Buttons */}
-        <div className="flex gap-4 pointer-events-auto">
-          <button 
+      {/* Attack control sits in a dedicated layer above the full-width
+          movement surface, with extra clearance for phone safe areas. */}
+      <div className="absolute inset-0 pointer-events-none z-30">
+        <div
+          className="absolute right-6 pointer-events-auto"
+          style={{ bottom: 'clamp(4.5rem, 12vh, 7rem)' }}
+        >
+          <button
+            type="button"
             className="w-24 h-24 bg-red-500/20 active:bg-red-500/40 rounded-full border-2 border-red-500/50 flex items-center justify-center transition-colors touch-none user-select-none"
-            onPointerDown={(e) => { e.preventDefault(); triggerAttack(); }}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              triggerAttack();
+            }}
             data-testid="button-attack"
+            aria-label="Attack"
           >
             <div className="w-16 h-16 bg-red-500/30 rounded-full flex items-center justify-center pointer-events-none">
               <span className="text-red-300 font-bold">ATTACK</span>
             </div>
           </button>
         </div>
-        
       </div>
     </div>
   );
