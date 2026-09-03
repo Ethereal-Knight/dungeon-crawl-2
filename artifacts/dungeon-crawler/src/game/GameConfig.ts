@@ -17,10 +17,15 @@ export const getGameConfig = (parent: HTMLElement): Phaser.Types.Core.GameConfig
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,
+    // Mobile viewport sizes can resolve to fractional CSS pixels. Keep the
+    // backing canvas on whole pixels so the browser does not resample it.
+    autoRound: true,
   },
-  // Placeholder art is vector-drawn and rotates freely, so keep smoothing on.
-  // Switch to `pixelArt: true` once real pixel sprites replace it.
-  pixelArt: false,
-  antialias: true,
+  render: {
+    // The generated dungeon textures are deliberately pixel-styled. Nearest
+    // filtering keeps them crisp when a high-DPI phone scales the canvas.
+    pixelArt: true,
+    roundPixels: true,
+  },
   scene: [GameScene],
 });
