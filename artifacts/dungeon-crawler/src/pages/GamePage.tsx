@@ -15,6 +15,11 @@ export default function GamePage() {
       if (!phaserGameRef.current) {
         const config = getGameConfig(gameRef.current!);
         phaserGameRef.current = new Phaser.default.Game(config);
+        if (import.meta.env.DEV) {
+          // Handy for poking at scenes from the browser console / tests.
+          (window as unknown as { __phaserGame?: Phaser.Game }).__phaserGame =
+            phaserGameRef.current;
+        }
       }
     });
 
@@ -22,6 +27,7 @@ export default function GamePage() {
       if (phaserGameRef.current) {
         phaserGameRef.current.destroy(true);
         phaserGameRef.current = null;
+        delete (window as unknown as { __phaserGame?: Phaser.Game }).__phaserGame;
       }
     };
   }, []);
