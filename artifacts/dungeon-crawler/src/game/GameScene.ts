@@ -2,13 +2,8 @@ import Phaser from 'phaser';
 import { DungeonGenerator, FLOOR, type ItemKind } from './DungeonGenerator';
 import { Enemy } from './Enemy';
 import { Fireball } from './Fireball';
-import {
-  Player,
-  SPELL_DAMAGE,
-  SWORD_ARC,
-  SWORD_DAMAGE,
-  SWORD_RANGE,
-} from './Player';
+import { Player, SWORD_ARC } from './Player';
+import { buy, type ShopItemId } from './shop';
 import {
   createPlaceholderTextures,
   pickFloorTile,
@@ -18,12 +13,15 @@ import {
 } from './textures';
 import {
   GAME_ATTACK,
+  GAME_BUY,
   GAME_INIT,
   GAME_JOYSTICK,
   GAME_LEVEL,
   GAME_MESSAGE,
   GAME_OVER,
   GAME_RESTART,
+  GAME_SHOP,
+  GAME_SHOP_LEAVE,
   GAME_SPELL,
   GAME_UPDATE,
   createRunState,
@@ -59,6 +57,7 @@ export class GameScene extends Phaser.Scene {
   private hudDirty = true;
   private nextHudAt = 0;
   private levelOver = false;
+  private shopOpen = false;
 
   constructor() {
     super('GameScene');
@@ -67,6 +66,7 @@ export class GameScene extends Phaser.Scene {
   init(data: SceneData) {
     this.run = data.run ?? createRunState();
     this.levelOver = false;
+    this.shopOpen = false;
   }
 
   preload() {
@@ -255,6 +255,8 @@ export class GameScene extends Phaser.Scene {
     window.addEventListener(GAME_SPELL, this.onSpell);
     window.addEventListener(GAME_RESTART, this.onRestart);
     window.addEventListener(GAME_JOYSTICK, this.onJoystick);
+    window.addEventListener(GAME_BUY, this.onBuy);
+    window.addEventListener(GAME_SHOP_LEAVE, this.onShopLeave);
   }
 
   // ---- Bridge handlers (arrow functions keep `this` bound) -------------
@@ -266,6 +268,16 @@ export class GameScene extends Phaser.Scene {
     const d = (e as CustomEvent<{ x: number; y: number }>).detail;
     this.joystick.set(d?.x ?? 0, d?.y ?? 0);
   };
+  private onBuy = (e: Event) => {
+    if (!this.shopOpen) return;
+    const id = (e as CustomEvent<{ id: ShopItemId }>).detail?.id;
+    if (id && buy(this.run, id)) emit(GAME_SHOP, { ...this.run });
+  };
+  private onShopLeave = () => {
+    if (!this.shopOpen) return;
+    this.shopOpen = false;
+    this.startNextFloor();
+  };
 
   // ---- Combat ------------------------------------------------------------
 
@@ -273,7 +285,8 @@ export class GameScene extends Phaser.Scene {
     if (this.run.health <= 0 || this.levelOver) return;
 
     // Aim assist: snap toward the closest enemy already roughly in front.
-    const target = this.closestEnemy(SWORD_RANGE * 1.6, Math.PI / 2);
+    const { swordRange, swordDamage } = this.player.stats;
+    const target = this.closestEnemy(swordRange * 1.6, Math.PI / 2);
     if (target) this.player.faceTowards(target.x, target.y);
 
     this.player.swing(() => {
@@ -283,10 +296,10 @@ export class GameScene extends Phaser.Scene {
         const enemy = child as Enemy;
         if (!enemy.active) continue;
         const dist = Phaser.Math.Distance.Between(x, y, enemy.x, enemy.y);
-        if (dist > SWORD_RANGE + enemy.width / 2) continue;
+        if (dist > swordRange + enemy.width / 2) continue;
         const toEnemy = Phaser.Math.Angle.Between(x, y, enemy.x, enemy.y);
         if (Math.abs(Phaser.Math.Angle.Wrap(toEnemy - facing)) > SWORD_ARC) continue;
-        this.damageEnemy(enemy, SWORD_DAMAGE, toEnemy, 240);
+        this.damageEnemy(enemy, swordDamage, toEnemy, 240);
         hits++;
       }
       if (hits > 0) this.cameras.main.shake(60, 0.003);
@@ -296,7 +309,8 @@ export class GameScene extends Phaser.Scene {
   private castSpell() {
     if (this.run.health <= 0 || this.levelOver) return;
 
-    const target = this.closestEnemy(280, Math.PI / 3);
+    const { spellLifetime } = this.player.stats;
+    const target = this.closestEnemy(spellLifetime * 0.45, Math.PI / 3);
     if (target) this.player.faceTowards(target.x, target.y);
 
     if (!this.player.cast()) {
@@ -313,6 +327,7 @@ export class GameScene extends Phaser.Scene {
       this.player.x + Math.cos(angle) * 18,
       this.player.y + Math.sin(angle) * 18,
       angle,
+      spellLifetime,
       (x, y) => this.spellExplosion(x, y),
     );
     this.fireballs.add(fb);
@@ -321,13 +336,14 @@ export class GameScene extends Phaser.Scene {
 
   private spellExplosion(x: number, y: number) {
     this.cameras.main.shake(80, 0.004);
+    const { spellDamage } = this.player.stats;
     for (const child of this.enemies.getChildren()) {
       const enemy = child as Enemy;
       if (!enemy.active) continue;
       const dist = Phaser.Math.Distance.Between(x, y, enemy.x, enemy.y);
       if (dist <= SPELL_AOE + enemy.width / 2) {
         const angle = Phaser.Math.Angle.Between(x, y, enemy.x, enemy.y);
-        this.damageEnemy(enemy, SPELL_DAMAGE, angle, 200);
+        this.damageEnemy(enemy, spellDamage, angle, 200);
       }
     }
   }
@@ -341,11 +357,13 @@ export class GameScene extends Phaser.Scene {
   private killEnemy(enemy: Enemy) {
     this.run.kills += 1;
     const { x, y } = enemy;
+    const { bonusCoins, gemChance } = this.player.stats;
     const [min, max] = enemy.stats.coins;
-    const coins = Phaser.Math.Between(min, max);
+    const coins = Phaser.Math.Between(min, max) + bonusCoins;
     for (let i = 0; i < coins; i++) this.addPickup(x, y, 'coin', true);
     if (Math.random() < 0.12) this.addPickup(x, y, 'food', true);
-    if (enemy.kind === 'skeleton' && Math.random() < 0.3) this.addPickup(x, y, 'gem', true);
+    const baseGem = enemy.kind === 'skeleton' ? 0.3 : 0.04;
+    if (Math.random() < baseGem + gemChance) this.addPickup(x, y, 'gem', true);
 
     const burst = this.add.particles(x, y, 'spark', {
       speed: { min: 40, max: 140 },
@@ -434,15 +452,24 @@ export class GameScene extends Phaser.Scene {
 
     this.cameras.main.fadeOut(450, 0, 0, 0);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-      const next: RunState = {
-        ...this.run,
-        depth: this.run.depth + 1,
-        // A short rest between floors: a little health, full mana.
-        health: Math.min(this.run.maxHealth, this.run.health + 10),
-        mana: this.run.maxMana,
-      };
-      this.scene.restart({ run: next } satisfies SceneData);
+      // Rest at the merchant between floors. The scene stays alive (paused)
+      // so purchases mutate the live run state; leaving restarts the scene.
+      this.physics.pause();
+      this.shopOpen = true;
+      emit(GAME_SHOP, { ...this.run });
     });
+  }
+
+  private startNextFloor() {
+    const next: RunState = {
+      ...this.run,
+      upgrades: { ...this.run.upgrades },
+      depth: this.run.depth + 1,
+      // A short rest between floors: a little health, full mana.
+      health: Math.min(this.run.maxHealth, this.run.health + 10),
+      mana: this.run.maxMana,
+    };
+    this.scene.restart({ run: next } satisfies SceneData);
   }
 
   private gameOver() {
@@ -553,6 +580,8 @@ export class GameScene extends Phaser.Scene {
     window.removeEventListener(GAME_SPELL, this.onSpell);
     window.removeEventListener(GAME_RESTART, this.onRestart);
     window.removeEventListener(GAME_JOYSTICK, this.onJoystick);
+    window.removeEventListener(GAME_BUY, this.onBuy);
+    window.removeEventListener(GAME_SHOP_LEAVE, this.onShopLeave);
     this.scale.off(Phaser.Scale.Events.RESIZE, this.fitCamera, this);
     this.joystick.set(0, 0);
   }

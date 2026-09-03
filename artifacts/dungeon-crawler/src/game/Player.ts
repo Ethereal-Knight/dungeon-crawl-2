@@ -1,16 +1,12 @@
 import Phaser from 'phaser';
 import type { RunState } from './events';
+import { derive } from './shop';
 
-export const SWORD_RANGE = 48;
 export const SWORD_ARC = Phaser.Math.DegToRad(70); // half-angle of the hit cone
-export const SWORD_DAMAGE = 15;
-export const SWORD_COOLDOWN = 280;
 
 export const SPELL_COST = 20;
 export const SPELL_COOLDOWN = 380;
-export const SPELL_DAMAGE = 25;
 export const SPELL_SPEED = 320;
-export const SPELL_LIFETIME = 650; // ms => roughly 6.5 tiles of range
 
 const MOVE_SPEED = 165;
 const ATTACK_MOVE_FACTOR = 0.45;
@@ -40,6 +36,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   constructor(scene: Phaser.Scene, x: number, y: number, run: RunState) {
     super(scene, x, y, 'player');
     this.run = run;
+    this.run.maxHealth = derive(run).maxHealth;
     scene.add.existing(this);
     scene.physics.add.existing(this);
 
@@ -59,6 +56,11 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   setMoveInput(x: number, y: number) {
     this.moveInput.set(x, y);
     if (this.moveInput.lengthSq() > 1) this.moveInput.normalize();
+  }
+
+  /** Upgrade- and gear-adjusted numbers, recomputed on demand. */
+  get stats() {
+    return derive(this.run);
   }
 
   get isAttacking() {
@@ -82,7 +84,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     const now = this.scene.time.now;
     if (now < this.attackReadyAt) return false;
 
-    this.attackReadyAt = now + SWORD_COOLDOWN;
+    this.attackReadyAt = now + this.stats.swordCooldown;
     this.attackingUntil = now + 200;
     this.swingDir *= -1;
 
@@ -234,7 +236,10 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
     // Mana regenerates slowly at all times.
     if (this.run.mana < this.run.maxMana) {
-      this.run.mana = Math.min(this.run.maxMana, this.run.mana + (delta / 1000) * 4);
+      this.run.mana = Math.min(
+        this.run.maxMana,
+        this.run.mana + (delta / 1000) * this.stats.manaRegen,
+      );
     }
 
     this.syncAttachments();

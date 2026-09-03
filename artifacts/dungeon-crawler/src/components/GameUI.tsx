@@ -8,18 +8,21 @@ import {
   GAME_MESSAGE,
   GAME_OVER,
   GAME_RESTART,
+  GAME_SHOP,
   GAME_SPELL,
   GAME_UPDATE,
   createRunState,
   emit,
   type RunState,
 } from '@/game/events';
+import { ShopUI } from '@/components/ShopUI';
 
 const SPELL_COST = 20;
 
 export function GameUI() {
   const [run, setRun] = useState<RunState>(createRunState);
   const [gameOver, setGameOver] = useState(false);
+  const [shopOpen, setShopOpen] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const isTouch = useIsTouchDevice();
@@ -28,6 +31,11 @@ export function GameUI() {
     const onInit = (e: Event) => {
       setRun((e as CustomEvent<RunState>).detail);
       setGameOver(false);
+      setShopOpen(false);
+    };
+    const onShop = (e: Event) => {
+      setRun((e as CustomEvent<RunState>).detail);
+      setShopOpen(true);
     };
     const onUpdate = (e: Event) => setRun((e as CustomEvent<RunState>).detail);
     const onOver = () => setGameOver(true);
@@ -52,12 +60,14 @@ export function GameUI() {
     window.addEventListener(GAME_OVER, onOver);
     window.addEventListener(GAME_LEVEL, onLevel);
     window.addEventListener(GAME_MESSAGE, onMessage);
+    window.addEventListener(GAME_SHOP, onShop);
     return () => {
       window.removeEventListener(GAME_INIT, onInit);
       window.removeEventListener(GAME_UPDATE, onUpdate);
       window.removeEventListener(GAME_OVER, onOver);
       window.removeEventListener(GAME_LEVEL, onLevel);
       window.removeEventListener(GAME_MESSAGE, onMessage);
+      window.removeEventListener(GAME_SHOP, onShop);
       window.clearTimeout(bannerTimer);
       window.clearTimeout(messageTimer);
     };
@@ -104,8 +114,10 @@ export function GameUI() {
         </div>
       </div>
 
+      {shopOpen && !gameOver && <ShopUI run={run} />}
+
       {/* Depth banner on floor entry */}
-      {banner && !gameOver && (
+      {banner && !gameOver && !shopOpen && (
         <div className="absolute inset-x-0 top-1/4 flex justify-center animate-in fade-in zoom-in-95 duration-300">
           <div className="text-3xl sm:text-4xl font-black tracking-widest text-amber-300 drop-shadow-[0_2px_12px_rgba(0,0,0,0.9)]">
             {banner.toUpperCase()}
@@ -114,7 +126,7 @@ export function GameUI() {
       )}
 
       {/* Transient status line */}
-      {!gameOver && (
+      {!gameOver && !shopOpen && (
         <div className="absolute top-[8.75rem] sm:top-2 left-1/2 -translate-x-1/2">
           <div className="bg-black/40 px-4 py-1 rounded-full text-xs text-white/70 border border-white/5 backdrop-blur-sm whitespace-nowrap">
             {message ?? 'Clear the cave, grab the loot, find the stairs'}
@@ -123,7 +135,7 @@ export function GameUI() {
       )}
 
       {/* Keyboard legend for desktop */}
-      {!isTouch && !gameOver && (
+      {!isTouch && !gameOver && !shopOpen && (
         <div className="absolute bottom-4 left-4 text-[11px] leading-5 text-white/50 font-mono bg-black/40 px-3 py-2 rounded-lg border border-white/5">
           <div><Key>WASD</Key> / <Key>Arrows</Key> move</div>
           <div><Key>Space</Key> sword &nbsp; <Key>F</Key> / <Key>Shift</Key> fireball</div>
@@ -153,7 +165,7 @@ export function GameUI() {
       )}
 
       {/* Touch controls */}
-      {!gameOver && (
+      {!gameOver && !shopOpen && (
         <>
           <Joystick visible={isTouch} />
           <div className="absolute inset-0 pointer-events-none z-30">

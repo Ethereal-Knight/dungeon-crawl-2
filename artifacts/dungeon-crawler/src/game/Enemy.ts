@@ -59,6 +59,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   public hp: number;
   public maxHp: number;
   public damage: number;
+  public speed: number;
 
   private target: Phaser.GameObjects.Components.Transform;
   private mode: State = 'idle';
@@ -83,10 +84,13 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.stats = stats;
     this.target = target;
 
-    const scale = 1 + (depth - 1) * 0.18;
-    this.maxHp = Math.round(stats.hp * scale);
+    // Every floor down, enemies hit harder, take more punishment and move
+    // a little quicker. Speed is capped so bats stay dodgeable.
+    const floors = depth - 1;
+    this.maxHp = Math.round(stats.hp * (1 + floors * 0.25));
     this.hp = this.maxHp;
-    this.damage = stats.damage + Math.floor((depth - 1) * 1.5);
+    this.damage = stats.damage + floors * 2;
+    this.speed = Math.round(stats.speed * Math.min(1.6, 1 + floors * 0.05));
 
     scene.add.existing(this);
     scene.physics.add.existing(this);
@@ -175,11 +179,11 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     switch (this.mode) {
       case 'chase': {
         const angle = Phaser.Math.Angle.Between(this.x, this.y, this.target.x, this.target.y);
-        let vx = Math.cos(angle) * this.stats.speed;
-        let vy = Math.sin(angle) * this.stats.speed;
+        let vx = Math.cos(angle) * this.speed;
+        let vy = Math.sin(angle) * this.speed;
         if (this.kind === 'bat') {
           this.wobblePhase += delta / 90;
-          const side = Math.sin(this.wobblePhase) * this.stats.speed * 0.9;
+          const side = Math.sin(this.wobblePhase) * this.speed * 0.9;
           vx += Math.cos(angle + Math.PI / 2) * side;
           vy += Math.sin(angle + Math.PI / 2) * side;
         }
@@ -199,7 +203,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         if (time >= this.nextDecisionAt) {
           this.mode = 'wander';
           const angle = Math.random() * Math.PI * 2;
-          const speed = this.stats.speed * 0.45;
+          const speed = this.speed * 0.45;
           this.setVelocity(Math.cos(angle) * speed, Math.sin(angle) * speed);
           this.nextDecisionAt = time + Phaser.Math.Between(500, 1200);
         }

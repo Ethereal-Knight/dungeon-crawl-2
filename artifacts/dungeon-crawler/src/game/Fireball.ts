@@ -1,5 +1,5 @@
 import Phaser from 'phaser';
-import { SPELL_LIFETIME, SPELL_SPEED } from './Player';
+import { SPELL_SPEED } from './Player';
 
 /**
  * Medium-range spell projectile. Flies straight along `angle`, leaves a
@@ -17,6 +17,7 @@ export class Fireball extends Phaser.Physics.Arcade.Sprite {
     x: number,
     y: number,
     angle: number,
+    lifetime: number,
     onExplode: (x: number, y: number) => void,
   ) {
     super(scene, x, y, 'fireball');
@@ -28,7 +29,7 @@ export class Fireball extends Phaser.Physics.Arcade.Sprite {
     this.setDepth(12);
     this.setRotation(angle);
     this.body!.setCircle(6, 2, 2);
-    this.diesAt = scene.time.now + SPELL_LIFETIME;
+    this.diesAt = scene.time.now + lifetime;
 
     this.trail = scene.add.particles(0, 0, 'spark', {
       follow: this,

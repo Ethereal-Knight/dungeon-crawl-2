@@ -6,6 +6,15 @@
  * the other.
  */
 
+/** Repeatable upgrade tracks sold by the merchant. */
+export interface Upgrades {
+  vitality: number; // max health
+  focus: number; // mana regen
+  reach: number; // spell distance
+  luck: number; // coin drops
+  strength: number; // damage
+}
+
 export interface RunState {
   health: number;
   maxHealth: number;
@@ -16,6 +25,11 @@ export interface RunState {
   coins: number;
   depth: number;
   kills: number;
+  upgrades: Upgrades;
+  /** Index into the weapon tier list in shop.ts */
+  weapon: number;
+  /** Index into the armor tier list in shop.ts */
+  armorTier: number;
 }
 
 export const createRunState = (): RunState => ({
@@ -24,10 +38,13 @@ export const createRunState = (): RunState => ({
   mana: 100,
   maxMana: 100,
   armor: 20,
-  maxArmor: 50,
+  maxArmor: 20,
   coins: 0,
   depth: 1,
   kills: 0,
+  upgrades: { vitality: 0, focus: 0, reach: 0, luck: 0, strength: 0 },
+  weapon: 0,
+  armorTier: 0,
 });
 
 /** Phaser -> React */
@@ -36,12 +53,15 @@ export const GAME_UPDATE = 'game-update'; // detail: RunState
 export const GAME_LEVEL = 'game-level'; // detail: { depth }
 export const GAME_OVER = 'game-over'; // detail: RunState
 export const GAME_MESSAGE = 'game-message'; // detail: { text }
+export const GAME_SHOP = 'game-shop'; // detail: RunState — merchant opened between floors
 
 /** React -> Phaser */
 export const GAME_ATTACK = 'game-attack';
 export const GAME_SPELL = 'game-spell';
 export const GAME_RESTART = 'game-restart';
 export const GAME_JOYSTICK = 'game-joystick'; // detail: { x, y } in -1..1
+export const GAME_BUY = 'game-buy'; // detail: { id: ShopItemId }
+export const GAME_SHOP_LEAVE = 'game-shop-leave'; // continue to the next floor
 
 export function emit<T>(name: string, detail?: T) {
   window.dispatchEvent(new CustomEvent(name, { detail }));

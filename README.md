@@ -20,8 +20,9 @@ other rooms with enemies and loot. The loop is:
    forgiving.
 4. Collect coins (5), gems (25) and food (heals 30). Slain enemies scatter
    coins, sometimes food, and skeletons occasionally drop a gem.
-5. Find the gold-framed stairs to descend. Each floor is bigger, has more and
-   tougher enemies, and grants full mana plus a little health on arrival.
+5. Find the gold-framed stairs to descend. Before each new floor a merchant
+   screen lets you spend coins on upgrades (see **The merchant** below).
+   Arriving on a floor grants full mana plus a little health.
 6. When health reaches zero the run ends and the overlay shows depth, coins and
    kills with a **Try Again** button.
 
@@ -36,6 +37,30 @@ second at all times.
 | Sword | none | 15 | ~1.5 tiles, 140° arc | 280 ms cooldown, alternating swing direction, slows movement to 45% while swinging |
 | Fireball | 20 mana | 25 | ~6.5 tiles, 40 px blast | 380 ms cooldown, explodes on walls, enemies, or at max range |
 
+### The merchant
+
+Taking the stairs pauses the game and opens the shop. Coins carry across the
+whole run. Everything sold is defined in `src/game/shop.ts`; the React
+storefront in `src/components/ShopUI.tsx` only renders offers and dispatches
+purchase intents, and Phaser applies them.
+
+| Item | Effect per purchase | Levels | Price |
+| --- | --- | --- | --- |
+| Weapon | Next sword tier: Rusty 15 → Iron 22 → Steel 30 → Runed 40 → Dragonfang 55 damage, with longer reach and faster swings | 4 | 90, 200, 380, 650 |
+| Armor | Next armor tier: Padded 20 → Leather 35 → Chain 55 → Plate 80 → Mithril 110 max armor, fully repaired | 4 | 70, 160, 300, 520 |
+| Repair Armor | Restores armor to its maximum | — | 1.5 coins per missing point (min 5) |
+| Vitality | +20 max health, heals 20 | 6 | 45 + 35 per level |
+| Focus | +2 mana regeneration per second | 5 | 40 + 30 per level |
+| Far Sight | +1.5 tiles of fireball range | 4 | 40 + 35 per level |
+| Luck | +1 coin per kill, +6% gem drop chance | 5 | 55 + 40 per level |
+| Strength | +15% sword and fireball damage | 6 | 60 + 45 per level |
+
+`derive(run)` in `shop.ts` turns the run state into the numbers gameplay
+reads (max health, mana regen, spell lifetime, sword damage/range/cooldown,
+spell damage, bonus coins, gem chance). Player, GameScene and Fireball all
+read from it, so adding a new upgrade means adding one entry to the catalog
+and one line to `derive`.
+
 ### Enemies
 
 | Kind | Health | Speed | Damage | Behaviour |
@@ -44,8 +69,9 @@ second at all times.
 | Bat | 18 | fast | 5 | Weaves side to side while chasing, long sight |
 | Skeleton | 60 | medium | 14 | Heavy: hard to knock back, drops the most coins |
 
-Health scales by 18% and damage by 1.5 per floor. Enemies stop after each hit
-and recoil, so contact never drains health continuously. Damaged enemies show
+Every floor down, enemy health rises by 25% of base, damage by 2, and speed by
+5% (speed caps at 160%). Enemies stop after each hit and recoil, so contact
+never drains health continuously. Damaged enemies show
 a small health bar.
 
 ### Controls
@@ -111,14 +137,19 @@ in `src/game/events.ts`:
 | `game-level` | Phaser → React | Announces the current depth for the floor banner |
 | `game-message` | Phaser → React | Short status text such as "Floor cleared" |
 | `game-over` | Phaser → React | The hero died; show the death screen |
+| `game-shop` | Phaser → React | The merchant opened, or a purchase changed the run state |
 | `game-attack` | React → Phaser | Requests a sword swing |
 | `game-spell` | React → Phaser | Requests a fireball |
+| `game-buy` | React → Phaser | Requests a purchase by item id |
+| `game-shop-leave` | React → Phaser | Leaves the merchant and starts the next floor |
 | `game-restart` | React → Phaser | Starts a fresh run at depth 1 |
 | `game-joystick` | React → Phaser | Sends a normalized movement vector from -1 to 1 |
 
-The run state (`RunState`) holds health, mana, armor, coins, depth and kills.
-It is passed through `scene.restart({ run })` when descending so progress
-survives the regenerated floor.
+The run state (`RunState`) holds health, mana, armor, coins, depth, kills,
+upgrade levels and the current weapon and armor tiers. While the merchant is
+open the scene stays alive but paused so purchases mutate the live state; on
+leaving, it is passed through `scene.restart({ run })` so progress survives
+the regenerated floor.
 
 This keeps the simulation and rendering in Phaser while leaving browser UI
 layout and touch interaction in React.
@@ -171,6 +202,8 @@ The Dungeon Crawler's main files are:
   its explosion.
 - `artifacts/dungeon-crawler/src/game/textures.ts` — all placeholder art,
   generated at runtime. Swap these for real sprites without touching gameplay.
+- `artifacts/dungeon-crawler/src/game/shop.ts` — merchant catalog, purchase
+  rules, and `derive()` for upgrade-adjusted hero stats.
 - `artifacts/dungeon-crawler/src/game/events.ts` — event names and the
   `RunState` shape shared by Phaser and React.
 - `artifacts/dungeon-crawler/src/game/GameConfig.ts` — Phaser renderer,
@@ -179,6 +212,8 @@ The Dungeon Crawler's main files are:
   and React overlay placement.
 - `artifacts/dungeon-crawler/src/components/GameUI.tsx` — HUD, banners,
   death flow, hold-to-repeat action buttons, and dynamic touch joystick.
+- `artifacts/dungeon-crawler/src/components/ShopUI.tsx` — the merchant
+  screen shown between floors.
 - `artifacts/dungeon-crawler/src/index.css` — dark game shell, typography,
   full-screen layout, and touch/scroll constraints.
 - `artifacts/dungeon-crawler/vite.config.ts` — Vite root, aliases, base path,
@@ -252,8 +287,8 @@ starting it; its lower-level scripts are also available from
   rotated at runtime. `pixelArt` is off in `GameConfig.ts` so these rotate
   smoothly; turn it on when pixel sprites arrive.
 - Progression is frontend-only and resets with a new run. There is no
-  persistence, account system, backend progression, saved run, or shop yet.
-  Coins and gems accumulate so a shop can be added between floors.
+  persistence, account system, backend progression, or saved run. Upgrades
+  bought at the merchant last for the current run only.
 - Phaser 4 Arcade physics groups re-apply their defaults (velocity, bounce,
   world-bounds collision) to any object added to them. Set physics flags via
   the group config, or after `group.add(...)`, never only in a constructor.
