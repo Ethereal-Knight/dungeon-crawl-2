@@ -83,9 +83,12 @@ export function GameUI() {
   };
 
   const updateJoystick = (clientX: number, clientY: number) => {
+    const rect = movementZoneRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
     const { x: originX, y: originY } = joystickOrigin.current;
-    let dx = clientX - originX;
-    let dy = clientY - originY;
+    let dx = clientX - rect.left - originX;
+    let dy = clientY - rect.top - originY;
     const distance = Math.sqrt(dx * dx + dy * dy);
     
     if (distance > maxRadius) {
