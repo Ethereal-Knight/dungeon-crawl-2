@@ -45,48 +45,47 @@ export function GameUI() {
     window.dispatchEvent(new CustomEvent('game-restart'));
   };
 
-  // Joystick state
-  const joystickRef = useRef<HTMLDivElement>(null);
+  // The joystick is a dynamic thumbstick: its origin is wherever the
+  // player's first touch lands in the lower half of the screen.
+  const movementZoneRef = useRef<HTMLDivElement>(null);
+  const activePointerId = useRef<number | null>(null);
+  const joystickOrigin = useRef({ x: 0, y: 0 });
   const [stickPos, setStickPos] = useState({ x: 0, y: 0 });
+  const [stickOrigin, setStickOrigin] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const maxRadius = 40;
 
-  const handleTouchStart = (e: React.TouchEvent | React.MouseEvent) => {
-    setIsDragging(true);
-    updateJoystick(e);
-  };
-
-  const handleTouchMove = (e: React.TouchEvent | React.MouseEvent) => {
-    if (!isDragging) return;
-    updateJoystick(e);
-  };
-
-  const handleTouchEnd = () => {
+  const endJoystick = () => {
+    activePointerId.current = null;
     setIsDragging(false);
     setStickPos({ x: 0, y: 0 });
     window.dispatchEvent(new CustomEvent('game-joystick', { detail: { x: 0, y: 0 } }));
   };
 
-  const updateJoystick = (e: React.TouchEvent | React.MouseEvent) => {
-    if (!joystickRef.current) return;
-    
-    const rect = joystickRef.current.getBoundingClientRect();
-    const centerX = rect.left + rect.width / 2;
-    const centerY = rect.top + rect.height / 2;
-    
-    let clientX = 0;
-    let clientY = 0;
-    
-    if ('touches' in e) {
-      clientX = e.touches[0].clientX;
-      clientY = e.touches[0].clientY;
-    } else {
-      clientX = (e as React.MouseEvent).clientX;
-      clientY = (e as React.MouseEvent).clientY;
-    }
+  const handlePointerStart = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (activePointerId.current !== null) return;
 
-    let dx = clientX - centerX;
-    let dy = clientY - centerY;
+    e.preventDefault();
+    activePointerId.current = e.pointerId;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const rect = e.currentTarget.getBoundingClientRect();
+    const localOrigin = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    joystickOrigin.current = localOrigin;
+    setStickOrigin(localOrigin);
+    setIsDragging(true);
+    updateJoystick(e.clientX, e.clientY);
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!isDragging || activePointerId.current !== e.pointerId) return;
+    e.preventDefault();
+    updateJoystick(e.clientX, e.clientY);
+  };
+
+  const updateJoystick = (clientX: number, clientY: number) => {
+    const { x: originX, y: originY } = joystickOrigin.current;
+    let dx = clientX - originX;
+    let dy = clientY - originY;
     const distance = Math.sqrt(dx * dx + dy * dy);
     
     if (distance > maxRadius) {
@@ -172,21 +171,27 @@ export function GameUI() {
         </div>
       )}
 
-      {/* Touch Controls - Bottom */}
-      <div className="p-8 flex justify-between items-end pb-12 w-full max-w-5xl mx-auto">
-        
-        {/* Joystick Base */}
+      {/* Full lower-half movement surface. The attack button is rendered above
+          it, so a thumb landing on the button still triggers an attack. */}
+      <div
+        ref={movementZoneRef}
+        className="absolute inset-x-0 bottom-0 h-1/2 pointer-events-auto touch-none"
+        onPointerDown={handlePointerStart}
+        onPointerMove={handlePointerMove}
+        onPointerUp={endJoystick}
+        onPointerCancel={endJoystick}
+        onLostPointerCapture={endJoystick}
+        aria-label="Touch anywhere in the lower half to move"
+      >
+        {/* Before the first touch, this is only a subtle affordance. During
+            movement it relocates to the exact thumb landing position. */}
         <div 
-          ref={joystickRef}
-          className="w-32 h-32 bg-white/5 rounded-full border-2 border-white/10 relative flex items-center justify-center pointer-events-auto touch-none"
-          onMouseDown={handleTouchStart}
-          onMouseMove={handleTouchMove}
-          onMouseUp={handleTouchEnd}
-          onMouseLeave={handleTouchEnd}
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-          onTouchCancel={handleTouchEnd}
+          className={`absolute w-32 h-32 rounded-full border-2 border-white/10 bg-white/5 flex items-center justify-center pointer-events-none ${isDragging ? 'opacity-100' : 'opacity-60'}`}
+          style={{
+            left: isDragging ? stickOrigin.x : '8rem',
+            top: isDragging ? stickOrigin.y : 'calc(100% - 7rem)',
+            transform: 'translate(-50%, -50%)',
+          }}
         >
           {/* Stick */}
           <div 
@@ -197,7 +202,10 @@ export function GameUI() {
             }}
           />
         </div>
+      </div>
 
+      {/* Touch Controls - Bottom */}
+      <div className="p-8 flex justify-end items-end pb-12 w-full max-w-5xl mx-auto pointer-events-none">
         {/* Action Buttons */}
         <div className="flex gap-4 pointer-events-auto">
           <button 
