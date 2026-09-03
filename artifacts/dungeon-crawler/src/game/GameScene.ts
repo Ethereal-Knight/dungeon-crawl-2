@@ -236,17 +236,7 @@ export class GameScene extends Phaser.Scene {
   private fitCamera() {
     const { width, height } = this.scale;
     const short = Math.min(width, height);
-    const targetZoom = Phaser.Math.Clamp(short / (11 * TILE), 1.1, 2.6);
-    // A fractional rendered tile size makes the browser interpolate every
-    // texture edge. Snap the 64px tiles to a whole number of screen pixels.
-    const minTilePixels = Math.ceil(1.1 * TILE);
-    const maxTilePixels = Math.floor(2.6 * TILE);
-    const tilePixels = Phaser.Math.Clamp(
-      Math.round(targetZoom * TILE),
-      minTilePixels,
-      maxTilePixels,
-    );
-    const zoom = tilePixels / TILE;
+    const zoom = Phaser.Math.Clamp(short / (11 * TILE), 1.1, 2.6);
     const cam = this.cameras.main;
     cam.setZoom(zoom);
     // Vignette is in screen space, so size it to the unzoomed viewport.
