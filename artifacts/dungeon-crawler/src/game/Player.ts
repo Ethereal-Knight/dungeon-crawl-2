@@ -1,6 +1,8 @@
 import Phaser from 'phaser';
 import type { RunState } from './events';
 import { derive } from './shop';
+import type { Anim, Dir } from './hero/heroSheet';
+import { HERO_TEXTURE, heroAnimKey } from './hero/heroTexture';
 
 export const SWORD_ARC = Phaser.Math.DegToRad(70); // half-angle of the hit cone
 
@@ -10,31 +12,36 @@ export const SPELL_SPEED = 320;
 
 const MOVE_SPEED = 165;
 const ATTACK_MOVE_FACTOR = 0.45;
-const SWORD_REST = 0.75; // radians off the facing direction when idle
 const INVULN_MS = 700;
+/** Knockback speed above which the hero plays the skid animation. */
+const KNOCKBACK_ANIM_SPEED = 40;
+
+/** One-shot animations that take priority over idle/walk until they finish. */
+type Action = 'none' | 'sword' | 'cast' | 'hurt';
 
 /**
- * The hero. An Arcade sprite whose body texture points along `facing`.
- * The sword and shadow are separate sprites that follow it each frame so the
- * swing can be animated independently of the body.
+ * The hero, Wren. An Arcade sprite driven by the procedural pixel-art sheet
+ * in ./hero. `facing` is a free angle used for aiming; the visible sprite
+ * snaps it to down / up / side (side is flipped for left).
  */
 export class Player extends Phaser.Physics.Arcade.Sprite {
-  public facing = 0;
+  public facing = Math.PI / 2; // start facing the camera
   public readonly run: RunState;
 
-  private sword: Phaser.GameObjects.Sprite;
   private shadow: Phaser.GameObjects.Image;
   private moveInput = new Phaser.Math.Vector2();
-  private swingOffset = SWORD_REST;
-  private swingDir = 1;
+  private knockback = new Phaser.Math.Vector2();
   private attackingUntil = 0;
   private attackReadyAt = 0;
   private spellReadyAt = 0;
   private invulnerableUntil = 0;
-  private knockback = new Phaser.Math.Vector2();
+
+  private dir: Dir = 'down';
+  private action: Action = 'none';
+  private dead = false;
 
   constructor(scene: Phaser.Scene, x: number, y: number, run: RunState) {
-    super(scene, x, y, 'player');
+    super(scene, x, y, HERO_TEXTURE, 'idle-down-0');
     this.run = run;
     this.run.maxHealth = derive(run).maxHealth;
     scene.add.existing(this);
@@ -42,13 +49,13 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
 
     this.setDepth(10);
     this.setCollideWorldBounds(true);
-    this.body!.setCircle(10, 6, 6);
+    // The drawn body spans roughly x 9..23, y 4..29 of the 32px frame.
+    this.body!.setCircle(9, 7, 12);
 
-    this.shadow = scene.add.image(x, y + 10, 'shadow').setDepth(5).setAlpha(0.8);
-    this.sword = scene.add
-      .sprite(x, y, 'sword')
-      .setOrigin(0.12, 0.5)
-      .setDepth(11);
+    this.shadow = scene.add.image(x, y + 13, 'shadow').setDepth(5).setAlpha(0.8);
+
+    this.on(Phaser.Animations.Events.ANIMATION_COMPLETE, this.onAnimationComplete, this);
+    this.play(heroAnimKey('idle', 'down'));
   }
 
   // ---- Input -------------------------------------------------------------
@@ -74,6 +81,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   /** Points the hero at a world position (used for aim assist). */
   faceTowards(x: number, y: number) {
     this.facing = Phaser.Math.Angle.Between(this.x, this.y, x, y);
+    this.updateDirection();
   }
 
   /**
@@ -82,51 +90,29 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
    */
   swing(onHitFrame: () => void): boolean {
     const now = this.scene.time.now;
-    if (now < this.attackReadyAt) return false;
+    if (now < this.attackReadyAt || this.dead) return false;
 
     this.attackReadyAt = now + this.stats.swordCooldown;
     this.attackingUntil = now + 200;
-    this.swingDir *= -1;
+    this.startAction('sword');
 
-    const from = -1.7 * this.swingDir;
-    const to = 1.7 * this.swingDir;
-    this.swingOffset = from;
-    let hitDone = false;
-
-    this.scene.tweens.addCounter({
-      from,
-      to,
-      duration: 170,
-      ease: 'Cubic.easeOut',
-      onUpdate: (tween) => {
-        this.swingOffset = tween.getValue() ?? to;
-        if (!hitDone && tween.progress >= 0.35) {
-          hitDone = true;
-          onHitFrame();
-        }
-      },
-      onComplete: () => {
-        this.scene.tweens.add({
-          targets: this,
-          swingOffset: SWORD_REST,
-          duration: 120,
-          ease: 'Sine.easeOut',
-        });
-      },
+    // The blade crosses the front of the body on the third frame (~85 ms at
+    // 24 fps); resolve the hit there so damage lands with the visual.
+    this.scene.time.delayedCall(80, () => {
+      if (this.active && !this.dead) onHitFrame();
     });
 
     // Slash arc flashes in front of the hero.
     const slash = this.scene.add
       .image(
-        this.x + Math.cos(this.facing) * 8,
-        this.y + Math.sin(this.facing) * 8,
+        this.x + Math.cos(this.facing) * 10,
+        this.y + 4 + Math.sin(this.facing) * 10,
         'slash',
       )
       .setRotation(this.facing)
       .setDepth(12)
       .setScale(0.6)
-      .setAlpha(0.9);
-    if (this.swingDir < 0) slash.setFlipY(true);
+      .setAlpha(0.85);
     this.scene.tweens.add({
       targets: slash,
       scale: 1.05,
@@ -142,19 +128,11 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
   /** Spends mana for a spell. Returns false when broke or cooling down. */
   cast(): boolean {
     const now = this.scene.time.now;
-    if (now < this.spellReadyAt || this.run.mana < SPELL_COST) return false;
+    if (now < this.spellReadyAt || this.run.mana < SPELL_COST || this.dead) return false;
     this.spellReadyAt = now + SPELL_COOLDOWN;
     this.run.mana -= SPELL_COST;
-
-    // Small recoil pulse so casting has weight.
-    this.scene.tweens.add({
-      targets: this,
-      scaleX: 1.18,
-      scaleY: 0.86,
-      duration: 70,
-      yoyo: true,
-      ease: 'Quad.easeOut',
-    });
+    this.attackingUntil = now + 150;
+    this.startAction('cast');
     return true;
   }
 
@@ -169,7 +147,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
    * when the hero was invulnerable.
    */
   takeDamage(amount: number, fromX: number, fromY: number): number {
-    if (this.isInvulnerable || this.run.health <= 0) return 0;
+    if (this.isInvulnerable || this.run.health <= 0 || this.dead) return 0;
 
     const reduction = this.run.armor / (this.run.armor + 60); // 20 armor ≈ 25%
     const dealt = Math.max(1, Math.round(amount * (1 - reduction)));
@@ -180,18 +158,20 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     const angle = Phaser.Math.Angle.Between(fromX, fromY, this.x, this.y);
     this.knockback.set(Math.cos(angle) * 260, Math.sin(angle) * 260);
 
-    this.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
-    this.scene.time.delayedCall(60, () => this.clearTint());
+    // Face the attacker so the flinch and the skid read correctly.
+    this.facing = Phaser.Math.Angle.Between(this.x, this.y, fromX, fromY);
+    this.updateDirection();
+    this.startAction('hurt');
+
+    // Blink for the rest of the invulnerability window (after the flinch).
     this.scene.tweens.add({
-      targets: [this, this.sword],
-      alpha: 0.3,
+      targets: this,
+      alpha: 0.35,
       duration: 80,
       yoyo: true,
-      repeat: Math.floor(INVULN_MS / 160) - 1,
-      onComplete: () => {
-        this.setAlpha(1);
-        this.sword.setAlpha(1);
-      },
+      delay: 200,
+      repeat: Math.floor((INVULN_MS - 200) / 160) - 1,
+      onComplete: () => this.setAlpha(1),
     });
 
     return dealt;
@@ -201,13 +181,29 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     this.run.health = Math.min(this.run.maxHealth, this.run.health + amount);
   }
 
+  /** Plays the death animation and freezes on the final frame. */
+  die() {
+    if (this.dead) return;
+    this.dead = true;
+    this.action = 'none';
+    this.setAlpha(1);
+    this.setFlipX(false);
+    this.setVelocity(0, 0);
+    this.play(heroAnimKey('death', 'down'));
+  }
+
+  get isDead() {
+    return this.dead;
+  }
+
   // ---- Per-frame ---------------------------------------------------------
 
   preUpdate(time: number, delta: number) {
     super.preUpdate(time, delta);
-    if (this.run.health <= 0) {
+    this.shadow.setPosition(this.x, this.y + 13);
+
+    if (this.dead || this.run.health <= 0) {
       this.setVelocity(0, 0);
-      this.syncAttachments();
       return;
     }
 
@@ -220,18 +216,18 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     if (this.knockback.lengthSq() > 1) {
       vx += this.knockback.x;
       vy += this.knockback.y;
-      const decay = Math.exp(-delta / 90);
-      this.knockback.scale(decay);
+      this.knockback.scale(Math.exp(-delta / 150));
     } else {
       this.knockback.set(0, 0);
     }
     this.setVelocity(vx, vy);
 
-    // Face the direction of travel, turning smoothly. Attacks lock facing so
-    // the swing lands where you aimed.
-    if (!this.isAttacking && this.moveInput.lengthSq() > 0.01) {
+    // Face the direction of travel, turning smoothly. Attacks and flinches
+    // lock facing so the swing lands where you aimed.
+    if (this.action === 'none' && this.moveInput.lengthSq() > 0.01) {
       const target = Math.atan2(this.moveInput.y, this.moveInput.x);
       this.facing = Phaser.Math.Angle.RotateTo(this.facing, target, 0.35);
+      this.updateDirection();
     }
 
     // Mana regenerates slowly at all times.
@@ -242,23 +238,46 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
       );
     }
 
-    this.syncAttachments();
+    this.updateAnimation();
   }
 
-  private syncAttachments() {
-    this.setRotation(this.facing);
-    this.shadow.setPosition(this.x, this.y + 11);
+  // ---- Animation ---------------------------------------------------------
 
-    const swordAngle = this.facing + this.swingOffset;
-    this.sword.setPosition(
-      this.x + Math.cos(this.facing) * 3 + Math.cos(swordAngle) * 6,
-      this.y + Math.sin(this.facing) * 3 + Math.sin(swordAngle) * 6,
-    );
-    this.sword.setRotation(swordAngle);
+  /** Snaps the free aiming angle to one of the drawn directions. */
+  private updateDirection() {
+    const deg = Phaser.Math.RadToDeg(Phaser.Math.Angle.Wrap(this.facing));
+    let dir: Dir;
+    let flip = false;
+    if (deg > -45 && deg <= 45) dir = 'side';
+    else if (deg > 45 && deg <= 135) dir = 'down';
+    else if (deg <= -45 && deg > -135) dir = 'up';
+    else {
+      dir = 'side';
+      flip = true;
+    }
+    this.dir = dir;
+    this.setFlipX(flip);
+  }
+
+  private startAction(action: Exclude<Action, 'none'>) {
+    this.action = action;
+    this.play(heroAnimKey(action, this.dir), false);
+  }
+
+  private onAnimationComplete(anim: Phaser.Animations.Animation) {
+    if (anim.key.startsWith(`hero-${this.action}-`)) this.action = 'none';
+  }
+
+  private updateAnimation() {
+    if (this.action !== 'none') return;
+    let anim: Anim;
+    if (this.knockback.length() > KNOCKBACK_ANIM_SPEED) anim = 'knockback';
+    else if (this.moveInput.lengthSq() > 0.01) anim = 'walk';
+    else anim = 'idle';
+    this.play(heroAnimKey(anim, this.dir), true);
   }
 
   destroy() {
-    this.sword?.destroy();
     this.shadow?.destroy();
     super.destroy();
   }

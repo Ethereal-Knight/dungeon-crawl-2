@@ -116,43 +116,7 @@ export function createPlaceholderTextures(scene: Phaser.Scene) {
   g.fillEllipse(14, 7, 26, 12);
   gen('shadow', 28, 14);
 
-  // Hero body: blue disc, darker rim, pale visor wedge pointing right (front),
-  // and two shoulder pads so the silhouette reads even when rotated.
-  g.fillStyle(0x1e3a8a, 1);
-  g.fillCircle(16, 16, 13);
-  g.fillStyle(0x3b82f6, 1);
-  g.fillCircle(16, 16, 11);
-  g.fillStyle(0x60a5fa, 1);
-  g.fillCircle(11, 10, 3.5);
-  g.fillCircle(11, 22, 3.5);
-  g.fillStyle(0xe0f2fe, 1);
-  g.beginPath();
-  g.moveTo(19, 10);
-  g.lineTo(29, 16);
-  g.lineTo(19, 22);
-  g.closePath();
-  g.fillPath();
-  g.fillStyle(0x0f172a, 1);
-  g.fillCircle(23, 16, 1.6);
-  gen('player', 32, 32);
-
-  // Sword: grip on the left, blade extends to the right. Origin is set on
-  // the sprite so the hilt stays in the hero's hand.
-  g.fillStyle(0x78350f, 1);
-  g.fillRect(0, 3, 6, 4);
-  g.fillStyle(0xb45309, 1);
-  g.fillRect(6, 0, 3, 10);
-  g.fillStyle(0xe5e7eb, 1);
-  g.fillRect(9, 3, 18, 4);
-  g.beginPath();
-  g.moveTo(27, 2);
-  g.lineTo(32, 5);
-  g.lineTo(27, 8);
-  g.closePath();
-  g.fillPath();
-  g.fillStyle(0xffffff, 1);
-  g.fillRect(9, 3, 18, 1);
-  gen('sword', 32, 10);
+  // The hero itself is a pixel-art sprite sheet; see ./hero/heroSheet.ts.
 
   // Slash arc: a translucent wedge, centered on the hero, opening to the right.
   g.fillStyle(0xffffff, 0.55);

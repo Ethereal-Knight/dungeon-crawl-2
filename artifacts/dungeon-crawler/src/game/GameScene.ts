@@ -4,6 +4,7 @@ import { Enemy } from './Enemy';
 import { Fireball } from './Fireball';
 import { Player, SWORD_ARC } from './Player';
 import { buy, type ShopItemId } from './shop';
+import { installHero } from './hero/heroTexture';
 import {
   createPlaceholderTextures,
   pickFloorTile,
@@ -71,6 +72,7 @@ export class GameScene extends Phaser.Scene {
 
   preload() {
     createPlaceholderTextures(this);
+    installHero(this);
   }
 
   // ---- Setup -------------------------------------------------------------
@@ -474,7 +476,7 @@ export class GameScene extends Phaser.Scene {
 
   private gameOver() {
     this.levelOver = true;
-    this.player.setTint(0x7f1d1d);
+    this.player.die();
     this.physics.pause();
     this.cameras.main.shake(300, 0.01);
     this.pushHud(true);

@@ -11,9 +11,10 @@ other rooms with enemies and loot. The loop is:
 
 1. Explore the generated rooms and tunnels. The map is a connected cave with
    eroded edges and a few loops, so there is usually more than one way around.
-2. Move with the keyboard or the on-screen virtual joystick. The hero turns to
-   face the direction of travel; the visor and the sword show which way they
-   are heading.
+2. Move with the keyboard or the on-screen virtual joystick. The hero, Wren,
+   is a fully animated pixel-art sprite: walking faces down, up, left or
+   right, and every action (sword, spell, flinch, knockback, death) has its
+   own animation.
 3. Fight with the sword (free, close range, wide arc) or throw fireballs
    (costs mana, medium range, small blast radius). Both snap toward the nearest
    enemy that is already roughly in front of you, which makes touch aiming
@@ -36,6 +37,41 @@ second at all times.
 | --- | --- | --- | --- | --- |
 | Sword | none | 15 | ~1.5 tiles, 140° arc | 280 ms cooldown, alternating swing direction, slows movement to 45% while swinging |
 | Fireball | 20 mana | 25 | ~6.5 tiles, 40 px blast | 380 ms cooldown, explodes on walls, enemies, or at max range |
+
+### The hero: Wren
+
+Wren is a hooded ranger-mage: teal hood and cloak, glowing cyan eyes in the
+hood's shadow, a crimson scarf whose tail flutters with movement, a leather
+tunic with a gold buckle, a bronze pauldron over the sword arm, and a
+steel-blue rune gauntlet on the casting hand that lights up for spells.
+
+The sprite sheet is generated procedurally by `src/game/hero/heroSheet.ts`,
+which has no Phaser dependency: it paints 32×32 frames into an RGBA buffer
+from a small pose model (bob, lean, leg/arm offsets, sword angle, glow, eyes,
+scarf flutter, flash, dust). `heroTexture.ts` turns that buffer into a canvas
+texture with nearest-neighbour filtering and registers one Phaser animation
+per (action, direction).
+
+| Animation | Frames | FPS | Directions | Notes |
+| --- | --- | --- | --- | --- |
+| idle | 4 | 4 | down, up, side | Breathing bob, scarf drift, blink |
+| walk | 6 | 10 | down, up, side | Stride cycle with arm swing |
+| sword | 5 | 24 | down, up, side | Wind-up, sweep across the body, recover; hit lands on frame 3 |
+| cast | 5 | 16 | down, up, side | Gauntlet rises, gathers light, releases |
+| hurt | 3 | 24 | down, up, side | White flash, flinch away from the attacker |
+| knockback | 3 | 16 | down, up, side | Leaning back, feet braced, dust while sliding |
+| death | 7 | 8 | down | Clutch, kneel, topple, lie still; holds the last frame |
+
+"Side" faces right; the game flips it for left. `Player.ts` keeps a free
+aiming angle for the hit cone and snaps it to one of the four directions for
+the sprite. One-shot actions lock facing until they finish; the hero faces
+the attacker when hit so the flinch and skid read correctly.
+
+Run `pnpm --filter @workspace/dungeon-crawler run hero:export` to write
+`public/sprites/hero.png`, `hero.json` (Phaser JSON-hash atlas) and a 4×
+`hero-preview.png`. Those files are the template for hand-made or generated
+art: keep the frame names, positions and 32×32 size, then switch
+`installHero()` to `scene.load.atlas(...)` and nothing else changes.
 
 ### The merchant
 
@@ -194,14 +230,21 @@ The Dungeon Crawler's main files are:
   camera, keyboard input, and the React event bridge.
 - `artifacts/dungeon-crawler/src/game/DungeonGenerator.ts` — rooms, tunnels,
   erosion, reachability, exit placement, enemy and item spawn tables.
-- `artifacts/dungeon-crawler/src/game/Player.ts` — hero sprite with facing,
-  sword swing animation, spell casting, armor-reduced damage and knockback.
+- `artifacts/dungeon-crawler/src/game/Player.ts` — hero sprite: movement,
+  four-way facing, animation state (idle/walk/sword/cast/hurt/knockback/
+  death), spell casting, armor-reduced damage and knockback.
+- `artifacts/dungeon-crawler/src/game/hero/heroSheet.ts` — procedural pixel
+  art for Wren: palette, pose model and every frame of every animation.
+- `artifacts/dungeon-crawler/src/game/hero/heroTexture.ts` — builds the hero
+  canvas texture and registers the Phaser animations.
+- `artifacts/dungeon-crawler/scripts/export-hero-sheet.ts` — writes the sheet
+  to `public/sprites/` as PNG + JSON atlas (`pnpm run hero:export`).
 - `artifacts/dungeon-crawler/src/game/Enemy.ts` — enemy stats per kind and
   the wander/chase/stunned state machine.
 - `artifacts/dungeon-crawler/src/game/Fireball.ts` — the spell projectile and
   its explosion.
-- `artifacts/dungeon-crawler/src/game/textures.ts` — all placeholder art,
-  generated at runtime. Swap these for real sprites without touching gameplay.
+- `artifacts/dungeon-crawler/src/game/textures.ts` — placeholder art for the
+  environment, enemies, pickups and effects, generated at runtime.
 - `artifacts/dungeon-crawler/src/game/shop.ts` — merchant catalog, purchase
   rules, and `derive()` for upgrade-adjusted hero stats.
 - `artifacts/dungeon-crawler/src/game/events.ts` — event names and the
@@ -282,10 +325,11 @@ starting it; its lower-level scripts are also available from
 
 ## Prototype boundaries and gotchas
 
-- Visuals are intentionally placeholders. `src/game/textures.ts` draws simple
-  vector shapes; every directional texture faces right (angle 0) and is
-  rotated at runtime. `pixelArt` is off in `GameConfig.ts` so these rotate
-  smoothly; turn it on when pixel sprites arrive.
+- Enemy, pickup and environment visuals are placeholders drawn in
+  `src/game/textures.ts`; directional textures face right (angle 0) and are
+  rotated at runtime. The hero is real pixel art (see **The hero: Wren**)
+  and its texture alone uses nearest-neighbour filtering. `pixelArt` stays
+  off in `GameConfig.ts` so the placeholders keep rotating smoothly.
 - Progression is frontend-only and resets with a new run. There is no
   persistence, account system, backend progression, or saved run. Upgrades
   bought at the merchant last for the current run only.
