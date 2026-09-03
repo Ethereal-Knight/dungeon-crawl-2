@@ -1,6 +1,6 @@
-# [Project name]
+# Dungeon Crawler
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A touch-friendly Phaser dungeon crawler prototype with generated cave rooms, sword combat, and a first-pass mobile HUD.
 
 ## Run & Operate
 
@@ -22,23 +22,33 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/dungeon-crawler/src/game/` — Phaser scene, cave generator, and game configuration
+- `artifacts/dungeon-crawler/src/components/GameUI.tsx` — responsive HUD and touch controls
+- `artifacts/dungeon-crawler/src/pages/GamePage.tsx` — game mount and React/Phaser bridge
+- `artifacts/dungeon-crawler/src/index.css` — game shell and HUD styling
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- The first slice is a frontend-only Phaser game; progression and persistence are intentionally deferred.
+- The cave is generated from a tile grid with rooms and tunnels so wall collision stays deterministic and easy to replace with authored maps later.
+- Phaser owns game rules and rendering while React owns the overlay HUD and touch input bridge.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+- Generates a navigable cave with rooms, tunnels, enemies, and collectible coins.
+- Supports keyboard movement plus a mobile virtual joystick.
+- Supports a sword swing with nearby enemy hit detection, knockback, damage feedback, and coins on defeat.
+- Shows health, mana regeneration, armor, coins, and a restart/new-run action.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Use simple placeholder graphics until the game mechanics are working; replace them later with generated artwork.
+- Prioritize touch-screen-friendly controls.
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- The dungeon artifact is the deployable web app at `/`; the API server is not used by the game yet.
+- Keep browser scrolling disabled during gameplay so pointer/touch input remains in the game surface.
 
 ## Pointers
 
