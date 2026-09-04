@@ -2,7 +2,8 @@ modules = ["nodejs-24"]
 
 [deployment]
 router = "application"
-deploymentTarget = "autoscale"
+deploymentTarget = "static"
+publicDir = "artifacts/dungeon-crawler/dist/public"
 
 [deployment.postBuild]
 args = ["pnpm", "store", "prune"]

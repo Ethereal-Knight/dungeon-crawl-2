@@ -17,7 +17,7 @@ run = "pnpm --filter @workspace/dungeon-crawler run dev"
 [services.production]
 build = [ "pnpm", "--filter", "@workspace/dungeon-crawler", "run", "build" ]
 serve = "static"
-publicDir = "artifacts/dungeon-crawler/dist/public"
+publicDir = "dist/public"
 
 [[services.production.rewrites]]
 from = "/*"
