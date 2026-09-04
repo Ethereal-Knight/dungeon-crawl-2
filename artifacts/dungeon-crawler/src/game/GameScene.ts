@@ -33,9 +33,13 @@ import {
 const MAP_W = 50;
 const MAP_H = 50;
 const SPELL_AOE = 40;
+const SILVER_VALUE = 1;
 const COIN_VALUE = 5;
 const GEM_VALUE = 25;
 const FOOD_HEAL = 30;
+const CHEST_HITS = 3;
+const BULLET_SPEED = 150;
+const BULLET_LIFETIME = 2600;
 
 interface SceneData {
   run?: RunState;
@@ -48,6 +52,8 @@ export class GameScene extends Phaser.Scene {
   private enemies!: Phaser.Physics.Arcade.Group;
   private pickups!: Phaser.Physics.Arcade.Group;
   private fireballs!: Phaser.Physics.Arcade.Group;
+  private enemyBullets!: Phaser.Physics.Arcade.Group;
+  private chests!: Phaser.Physics.Arcade.Group;
   private wallLayer!: Phaser.Tilemaps.TilemapLayer;
   private exit!: Phaser.Physics.Arcade.Image;
   private vignette!: Phaser.GameObjects.Image;
@@ -85,6 +91,7 @@ export class GameScene extends Phaser.Scene {
     this.spawnPlayer();
     this.spawnEnemies();
     this.spawnPickups();
+    this.spawnChests();
     this.spawnExit();
     this.setupCollisions();
     this.setupCamera();
@@ -143,7 +150,22 @@ export class GameScene extends Phaser.Scene {
     });
     for (const spawn of this.dungeon.enemies) {
       const { x, y } = this.toWorld(spawn);
-      this.enemies.add(new Enemy(this, x, y, spawn.kind, this.run.depth, this.player));
+      const enemy = new Enemy(this, x, y, spawn.kind, this.run.depth, this.player);
+      this.enemies.add(enemy);
+      // Group defaults were just applied; rooted enemies must stay rooted.
+      if (enemy.stats.stationary) enemy.setImmovable(true);
+      enemy.on('shoot', (angle: number) => this.spawnBullet(enemy, angle));
+    }
+  }
+
+  private spawnChests() {
+    this.chests = this.physics.add.group({ immovable: true });
+    for (const pos of this.dungeon.chests) {
+      const { x, y } = this.toWorld(pos);
+      const chest = this.chests.create(x, y, 'chest') as Phaser.Physics.Arcade.Image;
+      chest.setDepth(7);
+      chest.setData('hp', CHEST_HITS);
+      chest.body!.setSize(26, 20);
     }
   }
 
@@ -197,11 +219,22 @@ export class GameScene extends Phaser.Scene {
 
   private setupCollisions() {
     this.fireballs = this.physics.add.group();
+    this.enemyBullets = this.physics.add.group();
 
     this.physics.add.collider(this.player, this.wallLayer);
     this.physics.add.collider(this.enemies, this.wallLayer);
     this.physics.add.collider(this.enemies, this.enemies);
     this.physics.add.collider(this.pickups, this.wallLayer);
+    this.physics.add.collider(this.player, this.chests);
+    this.physics.add.collider(this.enemies, this.chests);
+    this.physics.add.collider(this.pickups, this.chests);
+
+    this.physics.add.collider(this.enemyBullets, this.wallLayer, (b) => {
+      (b as Phaser.Physics.Arcade.Image).destroy();
+    });
+    this.physics.add.overlap(this.player, this.enemyBullets, (_p, b) => {
+      this.bulletHitsPlayer(b as Phaser.Physics.Arcade.Image);
+    });
 
     this.physics.add.collider(this.player, this.enemies, (_p, e) => {
       this.enemyTouchesPlayer(e as Enemy);
@@ -215,6 +248,9 @@ export class GameScene extends Phaser.Scene {
       (fb as Fireball).explode();
     });
     this.physics.add.overlap(this.fireballs, this.enemies, (fb) => {
+      (fb as Fireball).explode();
+    });
+    this.physics.add.overlap(this.fireballs, this.chests, (fb) => {
       (fb as Fireball).explode();
     });
   }
@@ -304,6 +340,16 @@ export class GameScene extends Phaser.Scene {
         this.damageEnemy(enemy, swordDamage, toEnemy, 240);
         hits++;
       }
+      for (const child of this.chests.getChildren()) {
+        const chest = child as Phaser.Physics.Arcade.Image;
+        if (!chest.active) continue;
+        const dist = Phaser.Math.Distance.Between(x, y, chest.x, chest.y);
+        if (dist > swordRange + chest.width / 2) continue;
+        const toChest = Phaser.Math.Angle.Between(x, y, chest.x, chest.y);
+        if (Math.abs(Phaser.Math.Angle.Wrap(toChest - facing)) > SWORD_ARC) continue;
+        this.hitChest(chest);
+        hits++;
+      }
       if (hits > 0) this.cameras.main.shake(60, 0.003);
     });
   }
@@ -348,6 +394,13 @@ export class GameScene extends Phaser.Scene {
         this.damageEnemy(enemy, spellDamage, angle, 200);
       }
     }
+    for (const child of this.chests.getChildren()) {
+      const chest = child as Phaser.Physics.Arcade.Image;
+      if (!chest.active) continue;
+      if (Phaser.Math.Distance.Between(x, y, chest.x, chest.y) <= SPELL_AOE + chest.width / 2) {
+        this.hitChest(chest);
+      }
+    }
   }
 
   private damageEnemy(enemy: Enemy, amount: number, angle: number, knockback: number) {
@@ -359,12 +412,13 @@ export class GameScene extends Phaser.Scene {
   private killEnemy(enemy: Enemy) {
     this.run.kills += 1;
     const { x, y } = enemy;
-    const { bonusCoins, gemChance } = this.player.stats;
+    const { gemChance, extraDropChance } = this.player.stats;
     const [min, max] = enemy.stats.coins;
-    const coins = Phaser.Math.Between(min, max) + bonusCoins;
-    for (let i = 0; i < coins; i++) this.addPickup(x, y, 'coin', true);
-    if (Math.random() < 0.12) this.addPickup(x, y, 'food', true);
-    const baseGem = enemy.kind === 'skeleton' ? 0.3 : 0.04;
+    let coins = Phaser.Math.Between(min, max);
+    if (Math.random() < extraDropChance) coins += 1;
+    this.dropCoins(x, y, coins);
+    if (Math.random() < 0.06) this.addPickup(x, y, 'food', true);
+    const baseGem = enemy.kind === 'skeleton' ? 0.2 : 0.03;
     if (Math.random() < baseGem + gemChance) this.addPickup(x, y, 'gem', true);
 
     const burst = this.add.particles(x, y, 'spark', {
@@ -385,6 +439,84 @@ export class GameScene extends Phaser.Scene {
     if (this.enemies.countActive() === 0) {
       emit(GAME_MESSAGE, { text: 'Floor cleared! Find the stairs.' });
     }
+  }
+
+  /** Scatters `count` coins; each is gold with the luck-adjusted chance. */
+  private dropCoins(x: number, y: number, count: number, goldBonus = 0) {
+    const { goldChance } = this.player.stats;
+    for (let i = 0; i < count; i++) {
+      this.addPickup(x, y, Math.random() < goldChance + goldBonus ? 'coin' : 'silver', true);
+    }
+  }
+
+  private hitChest(chest: Phaser.Physics.Arcade.Image) {
+    const hp = (chest.getData('hp') as number) - 1;
+    chest.setData('hp', hp);
+    this.tweens.add({ targets: chest, scaleX: 1.15, scaleY: 0.85, duration: 60, yoyo: true });
+    const splinters = this.add.particles(chest.x, chest.y, 'spark', {
+      speed: { min: 40, max: 110 },
+      scale: { start: 0.7, end: 0 },
+      alpha: { start: 1, end: 0 },
+      lifespan: 300,
+      tint: 0xa0642c,
+      emitting: false,
+    });
+    splinters.setDepth(13);
+    splinters.explode(hp <= 0 ? 22 : 6);
+    this.time.delayedCall(400, () => splinters.destroy());
+
+    if (hp <= 0) {
+      this.breakChest(chest);
+    } else if (hp === 1) {
+      chest.setTexture('chest-cracked');
+    }
+  }
+
+  /** A broken chest always holds a gem and a handful of coins, sometimes food. */
+  private breakChest(chest: Phaser.Physics.Arcade.Image) {
+    const { x, y } = chest;
+    this.chests.remove(chest, true, true);
+    this.cameras.main.shake(80, 0.004);
+    this.floatText(x, y - 18, 'Treasure!', '#fbbf24', 13);
+    this.addPickup(x, y, 'gem', true);
+    this.dropCoins(x, y, Phaser.Math.Between(3, 5), 0.2);
+    if (Math.random() < 0.4) this.addPickup(x, y, 'food', true);
+  }
+
+  private spawnBullet(enemy: Enemy, angle: number) {
+    if (this.levelOver || this.run.health <= 0) return;
+    const bullet = this.enemyBullets.create(
+      enemy.x + Math.cos(angle) * 14,
+      enemy.y + Math.sin(angle) * 14,
+      'bullet',
+    ) as Phaser.Physics.Arcade.Image;
+    bullet.setDepth(9);
+    bullet.body!.setCircle(4, 1, 1);
+    bullet.setVelocity(Math.cos(angle) * BULLET_SPEED, Math.sin(angle) * BULLET_SPEED);
+    bullet.setData('damage', enemy.bulletDamage);
+    bullet.setData('diesAt', this.time.now + BULLET_LIFETIME);
+    this.tweens.add({
+      targets: bullet,
+      scale: { from: 0.8, to: 1.15 },
+      duration: 140,
+      yoyo: true,
+      repeat: -1,
+    });
+  }
+
+  private bulletHitsPlayer(bullet: Phaser.Physics.Arcade.Image) {
+    if (!bullet.active) return;
+    const damage = bullet.getData('damage') as number;
+    const fromX = bullet.x - bullet.body!.velocity.x;
+    const fromY = bullet.y - bullet.body!.velocity.y;
+    bullet.destroy();
+    if (this.run.health <= 0) return;
+    const dealt = this.player.takeDamage(damage, fromX, fromY);
+    if (dealt <= 0) return;
+    this.hudDirty = true;
+    this.floatText(this.player.x, this.player.y - 26, `-${dealt}`, '#f0abfc', 14);
+    this.cameras.main.shake(100, 0.005);
+    if (this.run.health <= 0) this.gameOver();
   }
 
   private enemyTouchesPlayer(enemy: Enemy) {
@@ -427,6 +559,10 @@ export class GameScene extends Phaser.Scene {
     this.pickups.remove(item, true, true);
 
     switch (kind) {
+      case 'silver':
+        this.run.coins += SILVER_VALUE;
+        this.floatText(x, y - 10, `+${SILVER_VALUE}`, '#d1d5db', 11);
+        break;
       case 'coin':
         this.run.coins += COIN_VALUE;
         this.floatText(x, y - 10, `+${COIN_VALUE}`, '#fbbf24');
@@ -524,6 +660,12 @@ export class GameScene extends Phaser.Scene {
       ) {
         this.castSpell();
       }
+    }
+
+    // Spitter bolts fizzle out after their lifetime.
+    for (const child of this.enemyBullets.getChildren().slice()) {
+      const bullet = child as Phaser.Physics.Arcade.Image;
+      if (bullet.active && time >= (bullet.getData('diesAt') as number)) bullet.destroy();
     }
 
     // Mana regen changes every frame; throttle HUD pushes to ~8/sec unless

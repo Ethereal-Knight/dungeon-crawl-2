@@ -5,6 +5,9 @@ import type { RunState, Upgrades } from './events';
  *
  * Everything here is plain data + functions so React can render offers and
  * Phaser can apply purchases from the same source of truth.
+ *
+ * Nothing ever maxes out: named weapon and armor tiers continue as "+N"
+ * enchantments, and repeatable upgrades keep climbing with rising prices.
  */
 
 export type UpgradeId = keyof Upgrades;
@@ -42,51 +45,78 @@ export const ARMORS: ArmorTier[] = [
   { name: 'Mithril Plate', maxArmor: 110, price: 520 },
 ];
 
+/** Growth factor applied per level once the named tiers run out. */
+const ENCHANT_PRICE_GROWTH = 1.3;
+
+/** Weapon stats for any level; beyond the named tiers they keep improving. */
+export function weaponAt(level: number): WeaponTier {
+  if (level < WEAPONS.length) return WEAPONS[level];
+  const last = WEAPONS[WEAPONS.length - 1];
+  const n = level - (WEAPONS.length - 1);
+  return {
+    name: `${last.name} +${n}`,
+    damage: last.damage + n * 7,
+    reach: Math.min(last.reach + n, 32),
+    cooldown: Math.max(180, last.cooldown - n * 5),
+    price: roundTo(last.price * ENCHANT_PRICE_GROWTH ** n, 10),
+  };
+}
+
+/** Armor stats for any level; beyond the named tiers they keep improving. */
+export function armorAt(level: number): ArmorTier {
+  if (level < ARMORS.length) return ARMORS[level];
+  const last = ARMORS[ARMORS.length - 1];
+  const n = level - (ARMORS.length - 1);
+  return {
+    name: `${last.name} +${n}`,
+    maxArmor: last.maxArmor + n * 25,
+    price: roundTo(last.price * ENCHANT_PRICE_GROWTH ** n, 10),
+  };
+}
+
 interface UpgradeDef {
   name: string;
   description: string;
-  max: number;
-  /** Price for level n (0-based) */
+  /** Price for level n (0-based); grows without bound. */
   price: (level: number) => number;
   /** Text for the per-level effect, e.g. "+20 max health" */
   perLevel: string;
 }
+
+/** Linear base cost with a gentle compounding tail so late levels stay meaningful. */
+const scaling = (base: number, step: number) => (level: number) =>
+  roundTo((base + level * step) * 1.1 ** level, 5);
 
 export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
   vitality: {
     name: 'Vitality',
     description: 'Hardier constitution.',
     perLevel: '+20 max health (and heals 20)',
-    max: 6,
-    price: (l) => 45 + l * 35,
+    price: scaling(45, 30),
   },
   focus: {
     name: 'Focus',
     description: 'Mana returns faster.',
     perLevel: '+2 mana per second',
-    max: 5,
-    price: (l) => 40 + l * 30,
+    price: scaling(40, 25),
   },
   reach: {
     name: 'Far Sight',
     description: 'Fireballs fly farther.',
     perLevel: '+1.5 tiles of spell range',
-    max: 4,
-    price: (l) => 40 + l * 35,
+    price: scaling(40, 30),
   },
   luck: {
     name: 'Luck',
-    description: 'Enemies drop more loot.',
-    perLevel: '+1 coin per kill, more gems',
-    max: 5,
-    price: (l) => 55 + l * 40,
+    description: 'Fortune favours you, a little.',
+    perLevel: 'Slightly better odds of gold, gems and extra drops',
+    price: scaling(55, 35),
   },
   strength: {
     name: 'Strength',
     description: 'Every hit lands harder.',
     perLevel: '+15% sword and spell damage',
-    max: 6,
-    price: (l) => 60 + l * 45,
+    price: scaling(60, 40),
   },
 };
 
@@ -97,8 +127,9 @@ export interface Offer {
   /** What the next purchase does. */
   effect: string;
   price: number;
+  /** Current level (0-based for upgrades; tier index for gear). */
   level: number;
-  max: number;
+  /** Only `repair` can be unavailable (armor already full). */
   maxed: boolean;
   affordable: boolean;
 }
@@ -110,34 +141,34 @@ export function getOffer(run: RunState, id: ShopItemId): Offer {
   switch (id) {
     case 'weapon': {
       const level = run.weapon;
-      const next = WEAPONS[level + 1];
-      const current = WEAPONS[level];
+      const current = weaponAt(level);
+      const next = weaponAt(level + 1);
       return {
         id,
-        name: next ? next.name : current.name,
+        name: next.name,
         description: `Wielding ${current.name} (${current.damage} dmg).`,
-        effect: next ? `${next.damage} damage, longer reach, faster swing` : 'Best blade in the cave',
-        price: next?.price ?? 0,
+        effect: `${next.damage} damage, ${next.reach > current.reach ? 'longer reach, ' : ''}${
+          next.cooldown < current.cooldown ? 'faster swing' : 'same swing speed'
+        }`,
+        price: next.price,
         level,
-        max: WEAPONS.length - 1,
-        maxed: !next,
-        affordable: !!next && run.coins >= next.price,
+        maxed: false,
+        affordable: run.coins >= next.price,
       };
     }
     case 'armor': {
       const level = run.armorTier;
-      const next = ARMORS[level + 1];
-      const current = ARMORS[level];
+      const current = armorAt(level);
+      const next = armorAt(level + 1);
       return {
         id,
-        name: next ? next.name : current.name,
+        name: next.name,
         description: `Wearing ${current.name} (${current.maxArmor} armor).`,
-        effect: next ? `${next.maxArmor} max armor, fully repaired` : 'Nothing sturdier exists',
-        price: next?.price ?? 0,
+        effect: `${next.maxArmor} max armor, fully repaired`,
+        price: next.price,
         level,
-        max: ARMORS.length - 1,
-        maxed: !next,
-        affordable: !!next && run.coins >= next.price,
+        maxed: false,
+        affordable: run.coins >= next.price,
       };
     }
     case 'repair': {
@@ -150,7 +181,6 @@ export function getOffer(run: RunState, id: ShopItemId): Offer {
         effect: missing > 0 ? `Restore ${missing} armor` : 'Already in perfect shape',
         price,
         level: 0,
-        max: 0,
         maxed: missing <= 0,
         affordable: missing > 0 && run.coins >= price,
       };
@@ -158,8 +188,7 @@ export function getOffer(run: RunState, id: ShopItemId): Offer {
     default: {
       const def = UPGRADES[id];
       const level = run.upgrades[id];
-      const maxed = level >= def.max;
-      const price = maxed ? 0 : def.price(level);
+      const price = def.price(level);
       return {
         id,
         name: def.name,
@@ -167,9 +196,8 @@ export function getOffer(run: RunState, id: ShopItemId): Offer {
         effect: def.perLevel,
         price,
         level,
-        max: def.max,
-        maxed,
-        affordable: !maxed && run.coins >= price,
+        maxed: false,
+        affordable: run.coins >= price,
       };
     }
   }
@@ -181,7 +209,7 @@ export function getOffers(run: RunState): Offer[] {
 
 /**
  * Applies a purchase in place. Returns false (and changes nothing) when the
- * item is maxed or unaffordable.
+ * item is unavailable or unaffordable.
  */
 export function buy(run: RunState, id: ShopItemId): boolean {
   const offer = getOffer(run, id);
@@ -194,7 +222,7 @@ export function buy(run: RunState, id: ShopItemId): boolean {
       break;
     case 'armor':
       run.armorTier += 1;
-      run.maxArmor = ARMORS[run.armorTier].maxArmor;
+      run.maxArmor = armorAt(run.armorTier).maxArmor;
       run.armor = run.maxArmor;
       break;
     case 'repair':
@@ -221,10 +249,12 @@ export interface DerivedStats {
   swordRange: number;
   swordCooldown: number;
   spellDamage: number;
-  /** Extra coins per kill. */
-  bonusCoins: number;
+  /** Probability that a dropped coin is gold (5) rather than silver (1). */
+  goldChance: number;
   /** Added probability of a gem drop. */
   gemChance: number;
+  /** Probability of one extra coin dropping per kill. */
+  extraDropChance: number;
 }
 
 const BASE_SPELL_LIFETIME = 650; // ms => roughly 6.5 tiles
@@ -234,7 +264,7 @@ const BASE_SWORD_RANGE = 48;
 /** Everything gameplay reads about the hero, computed from the run state. */
 export function derive(run: RunState): DerivedStats {
   const u = run.upgrades;
-  const weapon = WEAPONS[run.weapon] ?? WEAPONS[0];
+  const weapon = weaponAt(run.weapon);
   const power = 1 + u.strength * 0.15;
   return {
     maxHealth: 100 + u.vitality * 20,
@@ -244,7 +274,11 @@ export function derive(run: RunState): DerivedStats {
     swordRange: BASE_SWORD_RANGE + weapon.reach,
     swordCooldown: weapon.cooldown,
     spellDamage: Math.round(BASE_SPELL_DAMAGE * power),
-    bonusCoins: u.luck,
-    gemChance: u.luck * 0.06,
+    // Luck only nudges the odds; it never hands out coins directly.
+    goldChance: Math.min(0.6, 0.15 + u.luck * 0.04),
+    gemChance: Math.min(0.4, u.luck * 0.03),
+    extraDropChance: Math.min(0.75, u.luck * 0.06),
   };
 }
+
+const roundTo = (value: number, step: number) => Math.round(value / step) * step;

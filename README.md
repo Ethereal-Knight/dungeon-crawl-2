@@ -19,8 +19,10 @@ other rooms with enemies and loot. The loop is:
    (costs mana, medium range, small blast radius). Both snap toward the nearest
    enemy that is already roughly in front of you, which makes touch aiming
    forgiving.
-4. Collect coins (5), gems (25) and food (heals 30). Slain enemies scatter
-   coins, sometimes food, and skeletons occasionally drop a gem.
+4. Collect silver coins (1), gold coins (5), gems (25) and food (heals 30).
+   Slain enemies scatter coins, rarely food, and sometimes a gem. Treasure
+   chests take three hits to break and always hold a gem plus a handful of
+   coins, sometimes food.
 5. Find the gold-framed stairs to descend. Before each new floor a merchant
    screen lets you spend coins on upgrades (see **The merchant** below).
    Arriving on a floor grants full mana plus a little health.
@@ -82,18 +84,24 @@ purchase intents, and Phaser applies them.
 
 | Item | Effect per purchase | Levels | Price |
 | --- | --- | --- | --- |
-| Weapon | Next sword tier: Rusty 15 → Iron 22 → Steel 30 → Runed 40 → Dragonfang 55 damage, with longer reach and faster swings | 4 | 90, 200, 380, 650 |
-| Armor | Next armor tier: Padded 20 → Leather 35 → Chain 55 → Plate 80 → Mithril 110 max armor, fully repaired | 4 | 70, 160, 300, 520 |
+| Weapon | Next sword tier: Rusty 15 → Iron 22 → Steel 30 → Runed 40 → Dragonfang 55 damage, then Dragonfang +N | unlimited | 90, 200, 380, 650, then ×1.3 |
+| Armor | Next armor tier: Padded 20 → Leather 35 → Chain 55 → Plate 80 → Mithril 110 max armor, then Mithril +N; fully repaired | unlimited | 70, 160, 300, 520, then ×1.3 |
 | Repair Armor | Restores armor to its maximum | — | 1.5 coins per missing point (min 5) |
-| Vitality | +20 max health, heals 20 | 6 | 45 + 35 per level |
-| Focus | +2 mana regeneration per second | 5 | 40 + 30 per level |
-| Far Sight | +1.5 tiles of fireball range | 4 | 40 + 35 per level |
-| Luck | +1 coin per kill, +6% gem drop chance | 5 | 55 + 40 per level |
-| Strength | +15% sword and fireball damage | 6 | 60 + 45 per level |
+| Vitality | +20 max health, heals 20 | unlimited | 45 + 30 per level, ×1.1 per level |
+| Focus | +2 mana regeneration per second | unlimited | 40 + 25 per level, ×1.1 per level |
+| Far Sight | +1.5 tiles of fireball range | unlimited | 40 + 30 per level, ×1.1 per level |
+| Luck | +4% chance a coin is gold, +3% gem chance, +6% chance of an extra coin | unlimited | 55 + 35 per level, ×1.1 per level |
+| Strength | +15% sword and fireball damage | unlimited | 60 + 40 per level, ×1.1 per level |
+
+Nothing maxes out. After the last named weapon or armor tier, purchases
+continue as "+1", "+2"... enchantments (+7 damage or +25 max armor each,
+price ×1.3 per level). Repeatable upgrades have no cap; their price is a
+linear base compounded by 10% per level. Luck never hands out coins directly,
+it only nudges the drop odds.
 
 `derive(run)` in `shop.ts` turns the run state into the numbers gameplay
 reads (max health, mana regen, spell lifetime, sword damage/range/cooldown,
-spell damage, bonus coins, gem chance). Player, GameScene and Fireball all
+spell damage, gold chance, gem chance, extra-drop chance). Player, GameScene and Fireball all
 read from it, so adding a new upgrade means adding one entry to the catalog
 and one line to `derive`.
 
@@ -104,9 +112,11 @@ and one line to `derive`.
 | Slime | 30 | slow | 8 | Wanders, chases when within ~5 tiles |
 | Bat | 18 | fast | 5 | Weaves side to side while chasing, long sight |
 | Skeleton | 60 | medium | 14 | Heavy: hard to knock back, drops the most coins |
+| Spitter | 40 | rooted | 6 contact, 9 per bolt | Never moves and cannot be knocked back; spits a bolt at the hero every 1.7 s while in sight |
 
 Every floor down, enemy health rises by 25% of base, damage by 2, and speed by
-5% (speed caps at 160%). Enemies stop after each hit and recoil, so contact
+5% (speed caps at 160%). Spitter bolts gain 2 damage per floor and fire
+slightly faster (down to 0.9 s). Enemies stop after each hit and recoil, so contact
 never drains health continuously. Damaged enemies show
 a small health bar.
 
@@ -206,11 +216,14 @@ floor, in six steps:
    the generator as `distance`.
 5. Put the exit in the room farthest from the start by walking distance.
 6. Seed each non-start room with enemies (1 to 2 at depth 1, more deeper and
-   in the exit room, capped at 5) and loot: usually 1 to 3 coins, sometimes a
-   gem, sometimes food. Nothing spawns within four tiles of the hero, and at
-   least one piece of food is guaranteed per floor.
+   in the exit room, capped at 5) and loot: usually 1 to 3 coins (one in four
+   is gold, the rest silver), sometimes a gem, occasionally food (15% per
+   room). Nothing spawns within four tiles of the hero, and at least one piece
+   of food is guaranteed per floor. One chest per six rooms, plus one, lands in
+   a random non-start room.
 
-Enemy kinds are rolled by weight; skeletons become more common with depth.
+Enemy kinds are rolled by weight (spitters are a fixed 14%); skeletons become
+more common with depth.
 
 ## Repository orientation
 
@@ -343,10 +356,13 @@ starting it; its lower-level scripts are also available from
 - Enemy pathing is deliberately simple: they steer straight at the hero and
   can get stuck on walls. That is acceptable for the prototype and doubles as
   a way to fight from cover.
-- Keep browser scrolling and overscroll disabled during gameplay. The global
-  styles use `overflow: hidden`, `overscroll-behavior: none`, and
-  `touch-action: none` so the lower-half movement surface can reliably receive
-  touch input.
+- Keep browser scrolling, overscroll and zooming disabled during gameplay.
+  The viewport meta sets `user-scalable=no`, the global styles put
+  `touch-action: none` on `html`, `body` and `#root` (browsers intersect the
+  value across every ancestor of the touched element), and `GamePage`
+  swallows pinch gestures and a second tap within 300 ms because iOS Safari
+  ignores the meta tag. The shop overlay opts back into vertical panning with
+  an inline `touch-action: pan-y`.
 - Phaser and React must be cleaned up together. `GamePage` destroys the Phaser
   instance on unmount, and `GameScene` removes its window event listeners on
   shutdown.

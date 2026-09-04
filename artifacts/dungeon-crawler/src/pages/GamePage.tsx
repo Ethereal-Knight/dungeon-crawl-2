@@ -32,6 +32,28 @@ export default function GamePage() {
     };
   }, []);
 
+  // iOS Safari ignores `user-scalable=no`, so also swallow the gestures that
+  // zoom the page: pinch (gesturestart/gesturechange) and a second tap
+  // landing within 300 ms of the first. Buttons use pointer events, so this
+  // does not interfere with normal taps.
+  useEffect(() => {
+    let lastTouchEnd = 0;
+    const onTouchEnd = (e: TouchEvent) => {
+      const now = Date.now();
+      if (now - lastTouchEnd < 300) e.preventDefault();
+      lastTouchEnd = now;
+    };
+    const prevent = (e: Event) => e.preventDefault();
+    document.addEventListener('touchend', onTouchEnd, { passive: false });
+    document.addEventListener('gesturestart', prevent);
+    document.addEventListener('gesturechange', prevent);
+    return () => {
+      document.removeEventListener('touchend', onTouchEnd);
+      document.removeEventListener('gesturestart', prevent);
+      document.removeEventListener('gesturechange', prevent);
+    };
+  }, []);
+
   return (
     <div className="relative w-screen h-screen bg-black overflow-hidden select-none">
       {/* Phaser Canvas Container */}

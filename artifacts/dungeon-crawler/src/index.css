@@ -103,3 +103,17 @@
     touch-action: none;
   }
 }
+
+/* Game shell: never let the browser pan, pinch-zoom or double-tap-zoom the
+   page. touch-action is checked against every ancestor of the touched
+   element, so it has to be set on the root as well as body. The shop
+   overlay opts back into vertical panning with an inline touch-action. */
+html,
+body,
+#root {
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-text-size-adjust: 100%;
+}

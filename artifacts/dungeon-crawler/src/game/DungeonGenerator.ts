@@ -10,8 +10,9 @@ export interface Rect {
   h: number;
 }
 
-export type EnemyKind = 'slime' | 'bat' | 'skeleton';
-export type ItemKind = 'coin' | 'gem' | 'food';
+export type EnemyKind = 'slime' | 'bat' | 'skeleton' | 'spitter';
+/** `silver` is worth 1, `coin` (gold) 5, `gem` 25. */
+export type ItemKind = 'silver' | 'coin' | 'gem' | 'food';
 
 export interface EnemySpawn extends Point {
   kind: EnemyKind;
@@ -45,6 +46,8 @@ export class DungeonGenerator {
   public endPos: Point = { x: 0, y: 0 };
   public items: ItemSpawn[] = [];
   public enemies: EnemySpawn[] = [];
+  /** Breakable treasure chests. */
+  public chests: Point[] = [];
   /** Walking distance (in tiles) from startPos, -1 where unreachable. */
   public distance: number[][] = [];
 
@@ -58,6 +61,7 @@ export class DungeonGenerator {
     this.rooms = [];
     this.items = [];
     this.enemies = [];
+    this.chests = [];
 
     this.placeRooms(depth);
     this.connectRooms();
@@ -276,13 +280,14 @@ export class DungeonGenerator {
         this.enemies.push({ ...p, kind: this.rollEnemy(depth) });
       }
 
-      // Loot: coins are common, gems are the valuables, food keeps you alive.
+      // Loot: silver is common, gold less so, gems are the valuables, and a
+      // little food keeps you alive.
       const coins = Math.random() < 0.8 ? rand(1, 3) : 0;
       for (let c = 0; c < coins; c++) {
         const p = pick(room);
         if (!p) break;
         claim(p);
-        this.items.push({ ...p, kind: 'coin' });
+        this.items.push({ ...p, kind: Math.random() < 0.25 ? 'coin' : 'silver' });
       }
       if (Math.random() < 0.25 + depth * 0.03) {
         const p = pick(room);
@@ -291,12 +296,23 @@ export class DungeonGenerator {
           this.items.push({ ...p, kind: 'gem' });
         }
       }
-      if (Math.random() < 0.3) {
+      if (Math.random() < 0.15) {
         const p = pick(room);
         if (p) {
           claim(p);
           this.items.push({ ...p, kind: 'food' });
         }
+      }
+    }
+
+    // Treasure chests: a few per floor, never in the start room.
+    const chestCount = 1 + Math.floor(this.rooms.length / 6);
+    for (let c = 0; c < chestCount && this.rooms.length > 1; c++) {
+      const room = this.rooms[rand(1, this.rooms.length - 1)];
+      const p = pick(room);
+      if (p) {
+        claim(p);
+        this.chests.push(p);
       }
     }
 
@@ -308,11 +324,13 @@ export class DungeonGenerator {
   }
 
   private rollEnemy(depth: number): EnemyKind {
-    const skeleton = Math.min(0.1 + depth * 0.07, 0.45);
-    const bat = 0.3;
+    const skeleton = Math.min(0.1 + depth * 0.07, 0.4);
+    const bat = 0.28;
+    const spitter = 0.14;
     const r = Math.random();
     if (r < skeleton) return 'skeleton';
     if (r < skeleton + bat) return 'bat';
+    if (r < skeleton + bat + spitter) return 'spitter';
     return 'slime';
   }
 

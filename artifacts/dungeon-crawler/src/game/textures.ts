@@ -178,6 +178,71 @@ export function createPlaceholderTextures(scene: Phaser.Scene) {
   g.fillRect(22, 13, 8, 3);
   gen('skeleton', 30, 28);
 
+  // Spitter: a rooted eye-bulb that never moves but spits bolts. Faces right.
+  g.fillStyle(0x2e1065, 1);
+  g.fillRect(6, 22, 3, 5);
+  g.fillRect(12, 23, 3, 4);
+  g.fillRect(19, 22, 3, 5);
+  g.fillStyle(0x4c1d95, 1);
+  g.fillEllipse(14, 14, 24, 20);
+  g.fillStyle(0x6d28d9, 1);
+  g.fillEllipse(12, 9, 10, 6);
+  g.fillStyle(0xf5f3ff, 1);
+  g.fillEllipse(16, 14, 13, 10);
+  g.fillStyle(0xd946ef, 1);
+  g.fillCircle(18, 14, 4);
+  g.fillStyle(0x1e1b4b, 1);
+  g.fillCircle(19, 14, 2);
+  g.fillStyle(0xffffff, 1);
+  g.fillCircle(17, 12, 1);
+  gen('spitter', 28, 28);
+
+  // Spitter bolt.
+  g.fillStyle(0xa21caf, 1);
+  g.fillCircle(5, 5, 5);
+  g.fillStyle(0xe879f9, 1);
+  g.fillCircle(5, 5, 3.2);
+  g.fillStyle(0xfae8ff, 1);
+  g.fillCircle(5, 5, 1.4);
+  gen('bullet', 10, 10);
+
+  // Treasure chest, intact and cracked. Takes three hits to break open.
+  const chest = (cracked: boolean) => {
+    g.fillStyle(0x4a2a10, 1);
+    g.fillRoundedRect(1, 3, 26, 20, 3);
+    g.fillStyle(0x7c4a1e, 1);
+    g.fillRect(3, 5, 22, 16);
+    g.fillStyle(0xa0642c, 1);
+    g.fillRect(3, 5, 22, 3);
+    g.fillStyle(0x4a2a10, 1);
+    g.fillRect(3, 11, 22, 2);
+    g.fillRect(8, 5, 2, 16);
+    g.fillRect(18, 5, 2, 16);
+    g.fillStyle(0xe8bb4c, 1);
+    g.fillRect(12, 9, 4, 6);
+    g.fillStyle(0x92400e, 1);
+    g.fillRect(13, 12, 2, 2);
+    if (cracked) {
+      g.lineStyle(1, 0x1a0e05, 1);
+      g.beginPath();
+      g.moveTo(5, 6);
+      g.lineTo(9, 12);
+      g.lineTo(7, 19);
+      g.strokePath();
+      g.beginPath();
+      g.moveTo(22, 7);
+      g.lineTo(19, 14);
+      g.lineTo(23, 20);
+      g.strokePath();
+      g.fillStyle(0x1a0e05, 1);
+      g.fillRect(3, 8, 22, 1); // lid knocked ajar
+    }
+  };
+  chest(false);
+  gen('chest', 28, 24);
+  chest(true);
+  gen('chest-cracked', 28, 24);
+
   // ---- Pickups -----------------------------------------------------------
 
   g.fillStyle(0xb45309, 1);
@@ -187,6 +252,15 @@ export function createPlaceholderTextures(scene: Phaser.Scene) {
   g.fillStyle(0xfde68a, 1);
   g.fillRect(7, 4, 2, 8);
   gen('coin', 16, 16);
+
+  // Silver coin: worth 1, the everyday drop.
+  g.fillStyle(0x6b7280, 1);
+  g.fillCircle(7, 7, 6);
+  g.fillStyle(0xd1d5db, 1);
+  g.fillCircle(7, 7, 4.5);
+  g.fillStyle(0xf3f4f6, 1);
+  g.fillRect(6, 4, 2, 6);
+  gen('silver', 14, 14);
 
   g.fillStyle(0x0e7490, 1);
   g.beginPath();

@@ -107,7 +107,7 @@ function OfferCard({ offer }: { offer: Offer }) {
           {ICONS[offer.id]}
           <span className="text-white">{offer.name}</span>
         </div>
-        {offer.max > 0 && <Pips level={offer.level} max={offer.max} />}
+        {offer.id !== 'repair' && <LevelBadge level={offer.level} gear={offer.id === 'weapon' || offer.id === 'armor'} />}
       </div>
       <p className="text-xs text-white/50 leading-snug">{offer.description}</p>
       <p className="text-sm text-white/85 leading-snug">{offer.effect}</p>
@@ -125,7 +125,7 @@ function OfferCard({ offer }: { offer: Offer }) {
         data-testid={`buy-${offer.id}`}
       >
         {offer.maxed ? (
-          'Maxed'
+          'Full'
         ) : (
           <>
             <Coins className="w-4 h-4" />
@@ -137,15 +137,13 @@ function OfferCard({ offer }: { offer: Offer }) {
   );
 }
 
-function Pips({ level, max }: { level: number; max: number }) {
+function LevelBadge({ level, gear }: { level: number; gear: boolean }) {
   return (
-    <div className="flex gap-1 shrink-0" aria-label={`Level ${level} of ${max}`}>
-      {Array.from({ length: max }, (_, i) => (
-        <span
-          key={i}
-          className={`w-2 h-2 rounded-full ${i < level ? 'bg-amber-400' : 'bg-white/15'}`}
-        />
-      ))}
-    </div>
+    <span
+      className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-amber-300/90 bg-amber-400/10 border border-amber-400/20 rounded-full px-2 py-0.5"
+      aria-label={gear ? `Tier ${level}` : `Level ${level}`}
+    >
+      {gear ? `Tier ${level}` : `Lv ${level}`}
+    </span>
   );
 }

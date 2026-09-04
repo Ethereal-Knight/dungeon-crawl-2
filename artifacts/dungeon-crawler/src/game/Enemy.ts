@@ -12,6 +12,11 @@ interface EnemyStats {
   coins: [number, number];
   /** Weight of the body for knockback; heavier enemies budge less. */
   mass: number;
+  /** Rooted enemies never move and cannot be knocked back. */
+  stationary?: boolean;
+  /** ms between projectiles (stationary shooters only). */
+  shootRate?: number;
+  bulletDamage?: number;
 }
 
 const STATS: Record<EnemyKind, EnemyStats> = {
@@ -45,6 +50,19 @@ const STATS: Record<EnemyKind, EnemyStats> = {
     coins: [2, 4],
     mass: 1.8,
   },
+  spitter: {
+    texture: 'spitter',
+    hp: 40,
+    speed: 0,
+    damage: 6,
+    sight: 240,
+    attackRate: 1200,
+    coins: [1, 3],
+    mass: 100,
+    stationary: true,
+    shootRate: 1700,
+    bulletDamage: 9,
+  },
 };
 
 type State = 'idle' | 'wander' | 'chase' | 'stunned';
@@ -60,6 +78,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   public maxHp: number;
   public damage: number;
   public speed: number;
+  public bulletDamage: number;
+  public shootRate: number;
 
   private target: Phaser.GameObjects.Components.Transform;
   private mode: State = 'idle';
@@ -67,6 +87,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   private attackReadyAt = 0;
   private stunnedUntil = 0;
   private wobblePhase = Math.random() * Math.PI * 2;
+  private nextShotAt = 0;
   private healthBar: Phaser.GameObjects.Graphics;
   private shadow: Phaser.GameObjects.Image;
 
@@ -91,6 +112,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.hp = this.maxHp;
     this.damage = stats.damage + floors * 2;
     this.speed = Math.round(stats.speed * Math.min(1.6, 1 + floors * 0.05));
+    this.bulletDamage = (stats.bulletDamage ?? 0) + floors * 2;
+    this.shootRate = Math.max(900, (stats.shootRate ?? 0) - floors * 80);
 
     scene.add.existing(this);
     scene.physics.add.existing(this);
@@ -104,6 +127,8 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
     this.shadow = scene.add.image(x, y + 8, 'shadow').setDepth(5).setAlpha(0.6).setScale(0.9);
     this.healthBar = scene.add.graphics().setDepth(9);
     this.nextDecisionAt = scene.time.now + Math.random() * 1000;
+    this.nextShotAt = scene.time.now + 600 + Math.random() * 800;
+    if (stats.stationary) this.setImmovable(true);
 
     // Enemies pop in so a freshly generated floor feels alive.
     this.setScale(0);
@@ -117,6 +142,7 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   /** Called by the scene after this enemy damages the hero. */
   didAttack() {
     this.attackReadyAt = this.scene.time.now + this.stats.attackRate;
+    if (this.stats.stationary) return;
     // Recoil so the enemy does not stay glued to the hero.
     const angle = Phaser.Math.Angle.Between(this.target.x, this.target.y, this.x, this.y);
     this.setVelocity(Math.cos(angle) * 120, Math.sin(angle) * 120);
@@ -126,8 +152,10 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
   /** Returns true when the hit was fatal. The scene handles the death. */
   takeHit(amount: number, fromAngle: number, knockback = 220): boolean {
     this.hp -= amount;
-    const push = knockback / this.stats.mass;
-    this.setVelocity(Math.cos(fromAngle) * push, Math.sin(fromAngle) * push);
+    if (!this.stats.stationary) {
+      const push = knockback / this.stats.mass;
+      this.setVelocity(Math.cos(fromAngle) * push, Math.sin(fromAngle) * push);
+    }
     this.stun(260);
 
     this.setTint(0xffffff).setTintMode(Phaser.TintModes.FILL);
@@ -163,6 +191,11 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
 
   private think(time: number, delta: number) {
     const dist = Phaser.Math.Distance.Between(this.x, this.y, this.target.x, this.target.y);
+
+    if (this.stats.stationary) {
+      this.aimAndShoot(time, dist);
+      return;
+    }
 
     if (this.mode === 'stunned') {
       if (time < this.stunnedUntil) return;
@@ -209,6 +242,24 @@ export class Enemy extends Phaser.Physics.Arcade.Sprite {
         }
         break;
     }
+  }
+
+  /**
+   * Rooted shooters track the hero and emit `shoot` (with the aim angle)
+   * whenever the hero is in sight and the cooldown has elapsed. The scene
+   * spawns the projectile so it can own collisions.
+   */
+  private aimAndShoot(time: number, dist: number) {
+    this.setVelocity(0, 0);
+    this.setFlipX(this.target.x < this.x);
+    if (dist > this.stats.sight || time < this.nextShotAt) return;
+    if (this.mode === 'stunned' && time < this.stunnedUntil) return;
+    this.mode = 'idle';
+    this.nextShotAt = time + this.shootRate;
+    const angle = Phaser.Math.Angle.Between(this.x, this.y, this.target.x, this.target.y);
+    // Wind-up squash so the shot is telegraphed.
+    this.scene.tweens.add({ targets: this, scaleX: 1.2, scaleY: 0.85, duration: 90, yoyo: true });
+    this.emit('shoot', angle);
   }
 
   private drawHealthBar() {
