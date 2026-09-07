@@ -203,8 +203,25 @@ export function getOffer(run: RunState, id: ShopItemId): Offer {
   }
 }
 
-export function getOffers(run: RunState): Offer[] {
-  return SHOP_ORDER.map((id) => getOffer(run, id));
+export function getOffers(run: RunState, ids: readonly ShopItemId[] = SHOP_ORDER): Offer[] {
+  return ids.map((id) => getOffer(run, id));
+}
+
+/**
+ * Randomly stocks a shop with `count` distinct items. Repair is only stocked
+ * when armor is actually damaged.
+ */
+export function rollOffers(run: RunState, count: number, random: () => number = Math.random): ShopItemId[] {
+  const pool = SHOP_ORDER.filter((id) => id !== 'repair' || run.armor < run.maxArmor);
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, Math.min(count, pool.length));
+}
+
+export function isShopItemId(id: string): id is ShopItemId {
+  return (SHOP_ORDER as string[]).includes(id);
 }
 
 /**

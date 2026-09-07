@@ -10,12 +10,16 @@ export interface Rect {
   h: number;
 }
 
-export type EnemyKind = 'slime' | 'bat' | 'skeleton' | 'spitter';
+import { rollEnemyKind, type EnemyKind } from './enemyTypes.ts';
+
+export type { EnemyKind } from './enemyTypes.ts';
 /** `silver` is worth 1, `coin` (gold) 5, `gem` 25. */
-export type ItemKind = 'silver' | 'coin' | 'gem' | 'food';
+export type ItemKind = 'silver' | 'coin' | 'gem' | 'food' | 'key';
 
 export interface EnemySpawn extends Point {
   kind: EnemyKind;
+  /** This enemy carries the key to the exit door. */
+  hasKey?: boolean;
 }
 
 export interface ItemSpawn extends Point {
@@ -48,6 +52,8 @@ export class DungeonGenerator {
   public enemies: EnemySpawn[] = [];
   /** Breakable treasure chests. */
   public chests: Point[] = [];
+  /** Wandering merchant, present from depth 5. */
+  public merchant: Point | null = null;
   /** Walking distance (in tiles) from startPos, -1 where unreachable. */
   public distance: number[][] = [];
 
@@ -62,6 +68,7 @@ export class DungeonGenerator {
     this.items = [];
     this.enemies = [];
     this.chests = [];
+    this.merchant = null;
 
     this.placeRooms(depth);
     this.connectRooms();
@@ -86,8 +93,9 @@ export class DungeonGenerator {
   // ---- Layout ------------------------------------------------------------
 
   private placeRooms(depth: number) {
-    const target = Math.min(9 + depth, 16);
-    const attempts = 120;
+    // Bigger boards deeper down; the grid itself is sized by the scene.
+    const target = Math.min(12 + depth, Math.floor((this.width * this.height) / 220));
+    const attempts = 260;
     const minSize = 5;
     const maxSize = 11;
 
@@ -316,6 +324,34 @@ export class DungeonGenerator {
       }
     }
 
+    // The exit is locked. The enemy farthest from the start carries the key,
+    // so the whole floor has to be crossed at least once.
+    if (this.enemies.length > 0) {
+      let best = 0;
+      let bestDist = -1;
+      this.enemies.forEach((e, i) => {
+        const d = this.distance[e.y][e.x];
+        if (d > bestDist) {
+          bestDist = d;
+          best = i;
+        }
+      });
+      this.enemies[best].hasKey = true;
+    }
+
+    // A wandering merchant sets up shop somewhere away from start and exit.
+    if (depth >= 5 && this.rooms.length > 2) {
+      for (let tries = 0; tries < 12 && !this.merchant; tries++) {
+        const room = this.rooms[rand(1, this.rooms.length - 1)];
+        if (contains(room, this.endPos)) continue;
+        const p = pick(room);
+        if (p) {
+          claim(p);
+          this.merchant = p;
+        }
+      }
+    }
+
     // Guarantee at least one meal per floor so a bad roll is never fatal.
     if (!this.items.some((i) => i.kind === 'food') && this.rooms.length > 1) {
       const p = pick(this.rooms[rand(1, this.rooms.length - 1)]);
@@ -324,14 +360,7 @@ export class DungeonGenerator {
   }
 
   private rollEnemy(depth: number): EnemyKind {
-    const skeleton = Math.min(0.1 + depth * 0.07, 0.4);
-    const bat = 0.28;
-    const spitter = 0.14;
-    const r = Math.random();
-    if (r < skeleton) return 'skeleton';
-    if (r < skeleton + bat) return 'bat';
-    if (r < skeleton + bat + spitter) return 'spitter';
-    return 'slime';
+    return rollEnemyKind(depth);
   }
 
   // ---- Helpers -----------------------------------------------------------

@@ -30,6 +30,20 @@ export interface RunState {
   weapon: number;
   /** Index into the armor tier list in shop.ts */
   armorTier: number;
+  /** Holding the key to this floor's exit door. Reset every floor. */
+  hasKey: boolean;
+}
+
+/** Which shop is open and what it stocks. */
+export interface ShopSession {
+  kind: 'floor' | 'cave';
+  /** Item ids on offer (see shop.ts). */
+  offers: string[];
+}
+
+export interface ShopEvent {
+  run: RunState;
+  session: ShopSession;
 }
 
 export const createRunState = (): RunState => ({
@@ -45,6 +59,7 @@ export const createRunState = (): RunState => ({
   upgrades: { vitality: 0, focus: 0, reach: 0, luck: 0, strength: 0 },
   weapon: 0,
   armorTier: 0,
+  hasKey: false,
 });
 
 /** Phaser -> React */
@@ -53,7 +68,7 @@ export const GAME_UPDATE = 'game-update'; // detail: RunState
 export const GAME_LEVEL = 'game-level'; // detail: { depth }
 export const GAME_OVER = 'game-over'; // detail: RunState
 export const GAME_MESSAGE = 'game-message'; // detail: { text }
-export const GAME_SHOP = 'game-shop'; // detail: RunState — merchant opened between floors
+export const GAME_SHOP = 'game-shop'; // detail: ShopEvent — a shop opened or its stock changed
 
 /** React -> Phaser */
 export const GAME_ATTACK = 'game-attack';

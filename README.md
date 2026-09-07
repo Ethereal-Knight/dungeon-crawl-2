@@ -9,8 +9,9 @@ wrapped in a React/Vite application.
 Each run creates a new cave, places the hero in the first room, and fills the
 other rooms with enemies and loot. The loop is:
 
-1. Explore the generated rooms and tunnels. The map is a connected cave with
-   eroded edges and a few loops, so there is usually more than one way around.
+1. Explore the generated rooms and tunnels. The map is a 72×72 connected cave
+   with eroded edges and a few loops, so there is usually more than one way
+   around.
 2. Move with the keyboard or the on-screen virtual joystick. The hero, Wren,
    is a fully animated pixel-art sprite: walking faces down, up, left or
    right, and every action (sword, spell, flinch, knockback, death) has its
@@ -23,9 +24,13 @@ other rooms with enemies and loot. The loop is:
    Slain enemies scatter coins, rarely food, and sometimes a gem. Treasure
    chests take three hits to break and always hold a gem plus a handful of
    coins, sometimes food.
-5. Find the gold-framed stairs to descend. Before each new floor a merchant
-   screen lets you spend coins on upgrades (see **The merchant** below).
-   Arriving on a floor grants full mana plus a little health.
+5. The stairs down are behind a locked iron gate. One enemy on the floor,
+   the one farthest from where you start, carries the key (a bobbing key icon
+   floats above it). Kill it, pick up the key, and walk into the gate to
+   unlock it. Before each new floor a merchant screen offers three random
+   items (see **The merchant** below). From depth 5 a wandering merchant with
+   two random items can also be found somewhere in the cave. Arriving on a
+   floor grants full mana plus a little health.
 6. When health reaches zero the run ends and the overlay shows depth, coins and
    kills with a **Try Again** button.
 
@@ -39,6 +44,19 @@ second at all times.
 | --- | --- | --- | --- | --- |
 | Sword | none | 15 | ~1.5 tiles, 140° arc | 280 ms cooldown, alternating swing direction, slows movement to 45% while swinging |
 | Fireball | 20 mana | 25 | ~6.5 tiles, 40 px blast | 380 ms cooldown, explodes on walls, enemies, or at max range |
+
+### Cave eras
+
+Every three floors the cave changes character. Depths 1–3 are the base
+slate cave (8 floor and 8 wall tiles). Depths 4–6 add the **grotto** set
+(mushroom clusters, shallow water, vines, wet pebbles; vine-draped, dripping
+and crystal-studded walls, mossy brick faces). Depths 7–9 add the **ember
+depths** (ash, glowing cracks, scorched slabs; obsidian with embers, charred
+bricks, bone-embedded rock). Depth 10+ adds the **ancient ruins** (rune
+slabs, carved tiles, broken mosaic; rune bricks, carved pillars, skull
+niches). Each era mixes its own tiles with a little of the previous one.
+`tileEra()`, `pickFloorTile(depth)` and `pickWallTile(context, depth)` in
+`textures.ts` do the selection; there are 18 floor and 18 wall tiles in all.
 
 ### The hero: Wren
 
@@ -77,9 +95,14 @@ art: keep the frame names, positions and 32×32 size, then switch
 
 ### The merchant
 
-Taking the stairs pauses the game and opens the shop. Coins carry across the
-whole run. Everything sold is defined in `src/game/shop.ts`; the React
-storefront in `src/components/ShopUI.tsx` only renders offers and dispatches
+Taking the stairs pauses the game and opens the shop with **three** items
+drawn at random from the catalog below (Repair Armor is only in the pool
+when armor is damaged). From depth 5 a **wandering merchant** stands in a
+random room; walking into him opens a two-item stall rolled once per floor,
+and leaving returns you to the cave (step away and back to reopen it). Coins
+carry across the whole run. Everything sold is defined in
+`src/game/shop.ts` (`rollOffers` does the stocking); the React storefront in
+`src/components/ShopUI.tsx` only renders the offered items and dispatches
 purchase intents, and Phaser applies them.
 
 | Item | Effect per purchase | Levels | Price |
@@ -107,18 +130,35 @@ and one line to `derive`.
 
 ### Enemies
 
-| Kind | Health | Speed | Damage | Behaviour |
-| --- | --- | --- | --- | --- |
-| Slime | 30 | slow | 8 | Wanders, chases when within ~5 tiles |
-| Bat | 18 | fast | 5 | Weaves side to side while chasing, long sight |
-| Skeleton | 60 | medium | 14 | Heavy: hard to knock back, drops the most coins |
-| Spitter | 40 | rooted | 6 contact, 9 per bolt | Never moves and cannot be knocked back; spits a bolt at the hero every 1.7 s while in sight |
+Fourteen kinds, defined in `src/game/enemyTypes.ts` and introduced as you go
+deeper. Each has a distinct attack style (`Enemy.ts` implements the
+behaviours); the scene owns everything that needs world knowledge
+(projectiles, blasts, summons, teleport targets) and reacts to events the
+enemy raises.
 
-Every floor down, enemy health rises by 25% of base, damage by 2, and speed by
-5% (speed caps at 160%). Spitter bolts gain 2 damage per floor and fire
-slightly faster (down to 0.9 s). Enemies stop after each hit and recoil, so contact
-never drains health continuously. Damaged enemies show
-a small health bar.
+| Kind | From depth | Health | Damage | Style |
+| --- | --- | --- | --- | --- |
+| Slime | 1 | 30 | 8 | Wanders, chases when within ~5 tiles |
+| Bat | 1 | 18 | 5 | Weaves side to side while chasing, long sight |
+| Skeleton | 1 | 60 | 14 | Heavy: hard to knock back, drops the most coins |
+| Spitter | 1 | 40 | 6 contact, 9 per bolt | Rooted; spits a bolt every 1.7 s while in sight |
+| Tusker | 2 | 55 | 16 (×1.5 charging) | Winds up, then charges in a straight line; dazed if it hits a wall |
+| Goblin Archer | 3 | 35 | 6 contact, 10 per arrow | Keeps 4–7 tiles away and fires fast arrows |
+| Fusecap | 3 | 22 | 22 blast | Runs at you, lights its fuse, explodes in a 58 px radius; kill it first |
+| Wraith | 4 | 45 | 11 | Drifts straight through walls, fading in and out |
+| Cave Spider | 4 | 40 | 12 | Closes in, then pounces from mid range |
+| Cultist | 5 | 50 | 8 contact, 9 per bolt | Fires a three-bolt fan; blinks away when hit or approached |
+| Stone Golem | 6 | 180 | 18 contact, 24 slam | Very slow and heavy; ground-slam shockwave when you are close |
+| Great Slime | 6 | 75 | 12 | Splits into two slimes on death |
+| Bone Warden | 7 | 90 | 16 | Shield blocks 75% of damage from the front; flank it |
+| Bone Totem | 8 | 70 | 5 | Rooted; summons bats (up to three alive) while you are in sight |
+
+Enemies scale from the floor they are introduced on: +22% health, +2 damage
+and +5% speed per floor (speed caps at 160%), and shooters gain 2 bolt damage
+and fire a little faster. Newly unlocked kinds get a spawn-weight boost for
+two floors so each new face shows up promptly, and the first-floor kinds thin
+out as the roster grows. Damaged enemies show a small health bar; blocked
+hits show "blocked" in grey.
 
 ### Controls
 
@@ -183,7 +223,7 @@ in `src/game/events.ts`:
 | `game-level` | Phaser → React | Announces the current depth for the floor banner |
 | `game-message` | Phaser → React | Short status text such as "Floor cleared" |
 | `game-over` | Phaser → React | The hero died; show the death screen |
-| `game-shop` | Phaser → React | The merchant opened, or a purchase changed the run state |
+| `game-shop` | Phaser → React | A shop opened or its stock changed; carries the run state and the session (`floor` or `cave`, plus the offered item ids) |
 | `game-attack` | React → Phaser | Requests a sword swing |
 | `game-spell` | React → Phaser | Requests a fireball |
 | `game-buy` | React → Phaser | Requests a purchase by item id |
@@ -202,11 +242,11 @@ layout and touch interaction in React.
 
 ## Dungeon generation
 
-`DungeonGenerator` creates a 50-by-50 tile grid where `0` is wall and `1` is
-floor, in six steps:
+`DungeonGenerator` creates a 72-by-72 tile grid (sized by the scene) where
+`0` is wall and `1` is floor, in six steps:
 
-1. Scatter up to `9 + depth` (max 16) non-overlapping rooms, 5 to 11 tiles a
-   side, with a two-tile gap between rooms.
+1. Scatter up to `12 + depth` (capped by board area, about 23) non-overlapping
+   rooms, 5 to 11 tiles a side, with a two-tile gap between rooms.
 2. Join each new room to the nearest earlier room with a 2-wide L-shaped
    tunnel, then add a few extra tunnels so the layout has loops.
 3. Erode the walls for two passes: wall tiles with many floor neighbours crumble
@@ -220,10 +260,11 @@ floor, in six steps:
    is gold, the rest silver), sometimes a gem, occasionally food (15% per
    room). Nothing spawns within four tiles of the hero, and at least one piece
    of food is guaranteed per floor. One chest per six rooms, plus one, lands in
-   a random non-start room.
+   a random non-start room. The enemy farthest from the start by walking
+   distance is marked as the key holder. From depth 5 a merchant is placed in
+   a random room that is neither the start nor the exit room.
 
-Enemy kinds are rolled by weight (spitters are a fixed 14%); skeletons become
-more common with depth.
+Enemy kinds are rolled by depth-gated weight from `enemyTypes.ts`.
 
 ## Repository orientation
 
@@ -252,8 +293,11 @@ The Dungeon Crawler's main files are:
   canvas texture and registers the Phaser animations.
 - `artifacts/dungeon-crawler/scripts/export-hero-sheet.ts` — writes the sheet
   to `public/sprites/` as PNG + JSON atlas (`pnpm run hero:export`).
-- `artifacts/dungeon-crawler/src/game/Enemy.ts` — enemy stats per kind and
-  the wander/chase/stunned state machine.
+- `artifacts/dungeon-crawler/src/game/enemyTypes.ts` — the bestiary: stats,
+  depth gating and spawn weights for all fourteen kinds.
+- `artifacts/dungeon-crawler/src/game/Enemy.ts` — the behaviour routines
+  (chase, flutter, stationary, charger, kiter, bomber, phase, leaper,
+  teleporter, slam, shield, summoner) and the events they raise.
 - `artifacts/dungeon-crawler/src/game/Fireball.ts` — the spell projectile and
   its explosion.
 - `artifacts/dungeon-crawler/src/game/textures.ts` — placeholder art for the

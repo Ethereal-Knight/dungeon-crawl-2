@@ -1,9 +1,10 @@
 import Phaser from 'phaser';
 import { DungeonGenerator, FLOOR, type ItemKind } from './DungeonGenerator';
-import { Enemy } from './Enemy';
+import { Enemy, type AoeEvent, type ShootEvent } from './Enemy';
+import type { EnemyKind } from './enemyTypes';
 import { Fireball } from './Fireball';
 import { Player, SWORD_ARC } from './Player';
-import { buy, type ShopItemId } from './shop';
+import { buy, isShopItemId, rollOffers, type ShopItemId } from './shop';
 import { installHero } from './hero/heroTexture';
 import {
   createPlaceholderTextures,
@@ -28,18 +29,22 @@ import {
   createRunState,
   emit,
   type RunState,
+  type ShopEvent,
+  type ShopSession,
 } from './events';
 
-const MAP_W = 50;
-const MAP_H = 50;
+const MAP_W = 72;
+const MAP_H = 72;
 const SPELL_AOE = 40;
 const SILVER_VALUE = 1;
 const COIN_VALUE = 5;
 const GEM_VALUE = 25;
 const FOOD_HEAL = 30;
 const CHEST_HITS = 3;
-const BULLET_SPEED = 150;
 const BULLET_LIFETIME = 2600;
+const MAX_ENEMIES = 70;
+const FLOOR_SHOP_ITEMS = 3;
+const CAVE_SHOP_ITEMS = 2;
 
 interface SceneData {
   run?: RunState;
@@ -56,6 +61,9 @@ export class GameScene extends Phaser.Scene {
   private chests!: Phaser.Physics.Arcade.Group;
   private wallLayer!: Phaser.Tilemaps.TilemapLayer;
   private exit!: Phaser.Physics.Arcade.Image;
+  private door: Phaser.Physics.Arcade.Image | null = null;
+  private merchant: Phaser.Physics.Arcade.Image | null = null;
+  private merchantZone: Phaser.Physics.Arcade.Image | null = null;
   private vignette!: Phaser.GameObjects.Image;
 
   private cursors?: Phaser.Types.Input.Keyboard.CursorKeys;
@@ -64,7 +72,10 @@ export class GameScene extends Phaser.Scene {
   private hudDirty = true;
   private nextHudAt = 0;
   private levelOver = false;
-  private shopOpen = false;
+  private shop: ShopSession | null = null;
+  private caveOffers: ShopItemId[] = [];
+  private merchantReady = true;
+  private lockedMessageAt = 0;
 
   constructor() {
     super('GameScene');
@@ -72,8 +83,13 @@ export class GameScene extends Phaser.Scene {
 
   init(data: SceneData) {
     this.run = data.run ?? createRunState();
+    this.run.hasKey = false;
     this.levelOver = false;
-    this.shopOpen = false;
+    this.shop = null;
+    this.door = null;
+    this.merchant = null;
+    this.merchantZone = null;
+    this.merchantReady = true;
   }
 
   preload() {
@@ -93,12 +109,16 @@ export class GameScene extends Phaser.Scene {
     this.spawnPickups();
     this.spawnChests();
     this.spawnExit();
+    this.spawnMerchant();
     this.setupCollisions();
     this.setupCamera();
     this.setupInput();
 
+    this.caveOffers = rollOffers(this.run, CAVE_SHOP_ITEMS);
+
     emit(GAME_INIT, this.run);
     emit(GAME_LEVEL, { depth: this.run.depth });
+    emit(GAME_MESSAGE, { text: 'The exit is locked. One of them carries the key.' });
 
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, this.shutdown, this);
   }
@@ -118,12 +138,13 @@ export class GameScene extends Phaser.Scene {
     const floorLayer = map.createBlankLayer('Floor', floors)!;
     this.wallLayer = map.createBlankLayer('Wall', walls)!;
 
+    const depth = this.run.depth;
     for (let y = 0; y < MAP_H; y++) {
       for (let x = 0; x < MAP_W; x++) {
         if (this.dungeon.map[y][x] === FLOOR) {
-          floorLayer.putTileAt(pickFloorTile(), x, y);
+          floorLayer.putTileAt(pickFloorTile(depth), x, y);
         } else {
-          this.wallLayer.putTileAt(pickWallTile(this.wallContext(x, y)), x, y);
+          this.wallLayer.putTileAt(pickWallTile(this.wallContext(x, y), depth), x, y);
         }
       }
     }
@@ -150,23 +171,28 @@ export class GameScene extends Phaser.Scene {
     });
     for (const spawn of this.dungeon.enemies) {
       const { x, y } = this.toWorld(spawn);
-      const enemy = new Enemy(this, x, y, spawn.kind, this.run.depth, this.player);
-      this.enemies.add(enemy);
-      // Group defaults were just applied; rooted enemies must stay rooted.
-      if (enemy.stats.stationary) enemy.setImmovable(true);
-      enemy.on('shoot', (angle: number) => this.spawnBullet(enemy, angle));
+      const enemy = this.addEnemy(x, y, spawn.kind);
+      if (spawn.hasKey) enemy.giveKey();
     }
   }
 
-  private spawnChests() {
-    this.chests = this.physics.add.group({ immovable: true });
-    for (const pos of this.dungeon.chests) {
-      const { x, y } = this.toWorld(pos);
-      const chest = this.chests.create(x, y, 'chest') as Phaser.Physics.Arcade.Image;
-      chest.setDepth(7);
-      chest.setData('hp', CHEST_HITS);
-      chest.body!.setSize(26, 20);
-    }
+  /** Creates an enemy, adds it to the group and wires its ability events. */
+  private addEnemy(x: number, y: number, kind: EnemyKind): Enemy {
+    const enemy = new Enemy(this, x, y, kind, this.run.depth, this.player);
+    this.enemies.add(enemy);
+    if (enemy.stats.stationary) enemy.setImmovable(true);
+    enemy.on('shoot', (ev: ShootEvent) => this.spawnVolley(enemy, ev));
+    enemy.on('aoe', (ev: AoeEvent) => this.blast(enemy.x, enemy.y, ev.radius, ev.damage, 0xf97316));
+    // Defer: the bomber raises this from inside its own preUpdate, and
+    // destroying a sprite mid-update would throw and stall the game loop.
+    enemy.on('detonate', () => {
+      this.time.delayedCall(0, () => {
+        if (enemy.active) this.killEnemy(enemy);
+      });
+    });
+    enemy.on('summon', (minionKind: EnemyKind) => this.summon(enemy, minionKind));
+    enemy.on('teleport', () => this.teleport(enemy));
+    return enemy;
   }
 
   private spawnPickups() {
@@ -193,6 +219,11 @@ export class GameScene extends Phaser.Scene {
       sprite.setCollideWorldBounds(true);
     }
 
+    if (kind === 'key') {
+      sprite.setDepth(9).setScale(1.3);
+      this.tweens.add({ targets: sprite, angle: 12, duration: 400, yoyo: true, repeat: -1, ease: 'Sine.easeInOut' });
+    }
+
     // Gentle bob so pickups are easy to spot.
     this.tweens.add({
       targets: sprite,
@@ -202,6 +233,17 @@ export class GameScene extends Phaser.Scene {
       repeat: -1,
       ease: 'Sine.easeInOut',
     });
+  }
+
+  private spawnChests() {
+    this.chests = this.physics.add.group({ immovable: true });
+    for (const pos of this.dungeon.chests) {
+      const { x, y } = this.toWorld(pos);
+      const chest = this.chests.create(x, y, 'chest') as Phaser.Physics.Arcade.Image;
+      chest.setDepth(7);
+      chest.setData('hp', CHEST_HITS);
+      chest.body!.setSize(26, 20);
+    }
   }
 
   private spawnExit() {
@@ -215,19 +257,52 @@ export class GameScene extends Phaser.Scene {
       repeat: -1,
       ease: 'Sine.easeInOut',
     });
+
+    // The gate sits on top of the stairs until the key is used.
+    this.door = this.physics.add.image(x, y, 'door').setDepth(7).setImmovable(true);
+    this.door.body!.setSize(TILE, TILE);
+  }
+
+  private spawnMerchant() {
+    if (!this.dungeon.merchant) return;
+    const { x, y } = this.toWorld(this.dungeon.merchant);
+    this.merchant = this.physics.add.staticImage(x, y - 2, 'merchant').setDepth(8);
+    // A wider invisible zone opens the stall, so approaching from any side
+    // works even when the merchant stands against a wall.
+    this.merchantZone = this.physics.add.staticImage(x, y, 'shadow').setVisible(false);
+    this.merchantZone.body!.setSize(TILE + 20, TILE + 20);
+    this.merchantZone.body!.setOffset(-(TILE + 20 - this.merchantZone.width) / 2, -(TILE + 20 - this.merchantZone.height) / 2);
+    this.add.image(x, y + 12, 'shadow').setDepth(5).setAlpha(0.7);
+    // A gentle lantern glow so the merchant stands out in the dark.
+    const glow = this.add.image(x + 10, y + 4, 'spark').setDepth(6).setScale(3).setAlpha(0.25).setTint(0xfbbf24);
+    this.tweens.add({ targets: glow, alpha: 0.45, scale: 3.6, duration: 900, yoyo: true, repeat: -1 });
+    this.floatText(x, y - 26, 'Merchant', '#fbbf24', 11);
   }
 
   private setupCollisions() {
     this.fireballs = this.physics.add.group();
     this.enemyBullets = this.physics.add.group();
 
+    const solidEnemy = (obj: unknown) => !(obj as Enemy).stats?.phasing;
+
     this.physics.add.collider(this.player, this.wallLayer);
-    this.physics.add.collider(this.enemies, this.wallLayer);
-    this.physics.add.collider(this.enemies, this.enemies);
+    this.physics.add.collider(this.enemies, this.wallLayer, undefined, (e) => solidEnemy(e));
+    this.physics.add.collider(this.enemies, this.enemies, undefined, (a, b) => solidEnemy(a) && solidEnemy(b));
     this.physics.add.collider(this.pickups, this.wallLayer);
     this.physics.add.collider(this.player, this.chests);
-    this.physics.add.collider(this.enemies, this.chests);
+    this.physics.add.collider(this.enemies, this.chests, undefined, (e) => solidEnemy(e));
     this.physics.add.collider(this.pickups, this.chests);
+
+    if (this.door) {
+      this.physics.add.collider(this.player, this.door, () => this.tryOpenDoor());
+      this.physics.add.collider(this.enemies, this.door, undefined, (e) => solidEnemy(e));
+      this.physics.add.collider(this.pickups, this.door);
+    }
+    if (this.merchant && this.merchantZone) {
+      this.physics.add.collider(this.player, this.merchant);
+      this.physics.add.collider(this.enemies, this.merchant);
+      this.physics.add.overlap(this.player, this.merchantZone, () => this.openCaveShop());
+    }
 
     this.physics.add.collider(this.enemyBullets, this.wallLayer, (b) => {
       (b as Phaser.Physics.Arcade.Image).destroy();
@@ -307,20 +382,50 @@ export class GameScene extends Phaser.Scene {
     this.joystick.set(d?.x ?? 0, d?.y ?? 0);
   };
   private onBuy = (e: Event) => {
-    if (!this.shopOpen) return;
-    const id = (e as CustomEvent<{ id: ShopItemId }>).detail?.id;
-    if (id && buy(this.run, id)) emit(GAME_SHOP, { ...this.run });
+    if (!this.shop) return;
+    const id = (e as CustomEvent<{ id: string }>).detail?.id;
+    if (!id || !isShopItemId(id) || !this.shop.offers.includes(id)) return;
+    if (buy(this.run, id)) this.emitShop();
   };
   private onShopLeave = () => {
-    if (!this.shopOpen) return;
-    this.shopOpen = false;
-    this.startNextFloor();
+    if (!this.shop) return;
+    const kind = this.shop.kind;
+    this.shop = null;
+    if (kind === 'floor') {
+      this.startNextFloor();
+    } else {
+      // Back into the cave: the merchant needs a little space before the
+      // stall can be re-entered.
+      this.merchantReady = false;
+      this.physics.resume();
+      this.hudDirty = true;
+    }
   };
+
+  // ---- Shops -------------------------------------------------------------
+
+  private emitShop() {
+    if (!this.shop) return;
+    const detail: ShopEvent = { run: { ...this.run }, session: { ...this.shop } };
+    emit(GAME_SHOP, detail);
+  }
+
+  private openShop(kind: ShopSession['kind'], offers: ShopItemId[]) {
+    this.physics.pause();
+    this.player.setMoveInput(0, 0);
+    this.shop = { kind, offers };
+    this.emitShop();
+  }
+
+  private openCaveShop() {
+    if (this.shop || this.levelOver || !this.merchantReady || this.run.health <= 0) return;
+    this.openShop('cave', this.caveOffers);
+  }
 
   // ---- Combat ------------------------------------------------------------
 
   private swordAttack() {
-    if (this.run.health <= 0 || this.levelOver) return;
+    if (this.run.health <= 0 || this.levelOver || this.shop) return;
 
     // Aim assist: snap toward the closest enemy already roughly in front.
     const { swordRange, swordDamage } = this.player.stats;
@@ -355,7 +460,7 @@ export class GameScene extends Phaser.Scene {
   }
 
   private castSpell() {
-    if (this.run.health <= 0 || this.levelOver) return;
+    if (this.run.health <= 0 || this.levelOver || this.shop) return;
 
     const { spellLifetime } = this.player.stats;
     const target = this.closestEnemy(spellLifetime * 0.45, Math.PI / 3);
@@ -404,29 +509,43 @@ export class GameScene extends Phaser.Scene {
   }
 
   private damageEnemy(enemy: Enemy, amount: number, angle: number, knockback: number) {
+    const before = enemy.hp;
     const died = enemy.takeHit(amount, angle, knockback);
-    this.floatText(enemy.x, enemy.y - 16, `${amount}`, '#ffffff', 13);
+    const dealt = Math.max(0, before - enemy.hp);
+    if (enemy.lastHitBlocked) {
+      this.floatText(enemy.x, enemy.y - 18, `blocked ${dealt}`, '#9ca3af', 11);
+    } else {
+      this.floatText(enemy.x, enemy.y - 16, `${dealt}`, '#ffffff', 13);
+    }
     if (died) this.killEnemy(enemy);
   }
 
   private killEnemy(enemy: Enemy) {
     this.run.kills += 1;
-    const { x, y } = enemy;
+    const { x, y, kind, stats } = enemy;
+
     const { gemChance, extraDropChance } = this.player.stats;
-    const [min, max] = enemy.stats.coins;
+    const [min, max] = stats.coins;
     let coins = Phaser.Math.Between(min, max);
     if (Math.random() < extraDropChance) coins += 1;
     this.dropCoins(x, y, coins);
     if (Math.random() < 0.06) this.addPickup(x, y, 'food', true);
-    const baseGem = enemy.kind === 'skeleton' ? 0.2 : 0.03;
+    const baseGem = kind === 'skeleton' || kind === 'shieldbearer' || kind === 'golem' ? 0.2 : 0.03;
     if (Math.random() < baseGem + gemChance) this.addPickup(x, y, 'gem', true);
+
+    if (enemy.carriesKey) {
+      this.addPickup(x, y, 'key');
+      this.floatText(x, y - 28, 'The key!', '#fbbf24', 14);
+      emit(GAME_MESSAGE, { text: 'It dropped the key. Take it to the gate.' });
+    }
+    if (enemy.owner) enemy.owner.minions = Math.max(0, enemy.owner.minions - 1);
 
     const burst = this.add.particles(x, y, 'spark', {
       speed: { min: 40, max: 140 },
       scale: { start: 1, end: 0 },
       alpha: { start: 1, end: 0 },
       lifespan: 350,
-      tint: enemy.kind === 'slime' ? 0x22c55e : enemy.kind === 'bat' ? 0xa855f7 : 0xe5e7eb,
+      tint: this.deathColor(kind),
       emitting: false,
     });
     burst.setDepth(13);
@@ -436,8 +555,39 @@ export class GameScene extends Phaser.Scene {
     this.enemies.remove(enemy, true, true);
     this.hudDirty = true;
 
+    // Great slimes break into smaller ones.
+    if (stats.splitInto && this.enemies.countActive() < MAX_ENEMIES) {
+      for (let i = 0; i < stats.splitInto.count; i++) {
+        const a = (i / stats.splitInto.count) * Math.PI * 2;
+        const child = this.addEnemy(x + Math.cos(a) * 14, y + Math.sin(a) * 14, stats.splitInto.kind);
+        child.setVelocity(Math.cos(a) * 140, Math.sin(a) * 140);
+      }
+    }
+
     if (this.enemies.countActive() === 0) {
       emit(GAME_MESSAGE, { text: 'Floor cleared! Find the stairs.' });
+    }
+  }
+
+  private deathColor(kind: EnemyKind) {
+    switch (kind) {
+      case 'slime':
+      case 'bigslime':
+        return 0x22c55e;
+      case 'bat':
+      case 'spitter':
+      case 'mage':
+      case 'summoner':
+        return 0xa855f7;
+      case 'wraith':
+        return 0x7dd3fc;
+      case 'bomber':
+        return 0xef4444;
+      case 'charger':
+      case 'archer':
+        return 0x92400e;
+      default:
+        return 0xe5e7eb;
     }
   }
 
@@ -483,25 +633,30 @@ export class GameScene extends Phaser.Scene {
     if (Math.random() < 0.4) this.addPickup(x, y, 'food', true);
   }
 
-  private spawnBullet(enemy: Enemy, angle: number) {
-    if (this.levelOver || this.run.health <= 0) return;
-    const bullet = this.enemyBullets.create(
-      enemy.x + Math.cos(angle) * 14,
-      enemy.y + Math.sin(angle) * 14,
-      'bullet',
-    ) as Phaser.Physics.Arcade.Image;
-    bullet.setDepth(9);
-    bullet.body!.setCircle(4, 1, 1);
-    bullet.setVelocity(Math.cos(angle) * BULLET_SPEED, Math.sin(angle) * BULLET_SPEED);
-    bullet.setData('damage', enemy.bulletDamage);
-    bullet.setData('diesAt', this.time.now + BULLET_LIFETIME);
-    this.tweens.add({
-      targets: bullet,
-      scale: { from: 0.8, to: 1.15 },
-      duration: 140,
-      yoyo: true,
-      repeat: -1,
-    });
+  // ---- Enemy abilities -----------------------------------------------------
+
+  private spawnVolley(enemy: Enemy, ev: ShootEvent) {
+    if (this.levelOver || this.run.health <= 0 || this.shop) return;
+    const count = ev.spec.count ?? 1;
+    const spread = ev.spec.spread ?? 0;
+    for (let i = 0; i < count; i++) {
+      const offset = count > 1 ? -spread / 2 + (spread * i) / (count - 1) : 0;
+      const angle = ev.angle + offset;
+      const bullet = this.enemyBullets.create(
+        enemy.x + Math.cos(angle) * 14,
+        enemy.y + Math.sin(angle) * 14,
+        ev.spec.texture,
+      ) as Phaser.Physics.Arcade.Image;
+      bullet.setDepth(9);
+      bullet.setRotation(angle);
+      bullet.body!.setCircle(4, bullet.width / 2 - 4, bullet.height / 2 - 4);
+      bullet.setVelocity(Math.cos(angle) * ev.spec.speed, Math.sin(angle) * ev.spec.speed);
+      bullet.setData('damage', ev.damage);
+      bullet.setData('diesAt', this.time.now + BULLET_LIFETIME);
+      if (ev.spec.texture === 'bullet') {
+        this.tweens.add({ targets: bullet, scale: { from: 0.8, to: 1.15 }, duration: 140, yoyo: true, repeat: -1 });
+      }
+    }
   }
 
   private bulletHitsPlayer(bullet: Phaser.Physics.Arcade.Image) {
@@ -510,27 +665,104 @@ export class GameScene extends Phaser.Scene {
     const fromX = bullet.x - bullet.body!.velocity.x;
     const fromY = bullet.y - bullet.body!.velocity.y;
     bullet.destroy();
-    if (this.run.health <= 0) return;
-    const dealt = this.player.takeDamage(damage, fromX, fromY);
-    if (dealt <= 0) return;
+    this.hurtPlayer(damage, fromX, fromY, '#f0abfc');
+  }
+
+  /** Expanding shockwave that hurts the hero if caught inside. */
+  private blast(x: number, y: number, radius: number, damage: number, color: number) {
+    const ring = this.add.image(x, y, 'ring').setDepth(13).setTint(color).setScale(0.2).setAlpha(0.9);
+    this.tweens.add({
+      targets: ring,
+      scale: (radius * 2) / 64,
+      alpha: 0,
+      duration: 320,
+      ease: 'Quad.easeOut',
+      onComplete: () => ring.destroy(),
+    });
+    const burst = this.add.particles(x, y, 'spark', {
+      speed: { min: 60, max: 200 },
+      scale: { start: 1.1, end: 0 },
+      alpha: { start: 1, end: 0 },
+      lifespan: { min: 200, max: 420 },
+      tint: [color, 0xffffff],
+      emitting: false,
+    });
+    burst.setDepth(13);
+    burst.explode(20);
+    this.time.delayedCall(500, () => burst.destroy());
+    this.cameras.main.shake(140, 0.006);
+
+    if (Phaser.Math.Distance.Between(x, y, this.player.x, this.player.y) <= radius + 8) {
+      this.hurtPlayer(damage, x, y, '#fb923c');
+    }
+  }
+
+  private summon(summoner: Enemy, kind: EnemyKind) {
+    if (this.levelOver || this.shop || this.enemies.countActive() >= MAX_ENEMIES) return;
+    const spot = this.nearbyFloor(summoner.x, summoner.y, 1, 2) ?? { x: summoner.x, y: summoner.y + TILE };
+    const minion = this.addEnemy(spot.x, spot.y, kind);
+    minion.owner = summoner;
+    summoner.minions += 1;
+    this.puff(spot.x, spot.y, 0xa855f7);
+  }
+
+  private teleport(enemy: Enemy) {
+    if (!enemy.active || this.levelOver) return;
+    const spot = this.nearbyFloor(enemy.x, enemy.y, 4, 9);
+    if (!spot) return;
+    this.puff(enemy.x, enemy.y, 0xc084fc);
+    enemy.setPosition(spot.x, spot.y);
+    enemy.body!.reset(spot.x, spot.y);
+    this.puff(spot.x, spot.y, 0xc084fc);
+  }
+
+  /** Random reachable floor tile between minTiles and maxTiles away (world coords). */
+  private nearbyFloor(wx: number, wy: number, minTiles: number, maxTiles: number) {
+    const tx = Math.floor(wx / TILE);
+    const ty = Math.floor(wy / TILE);
+    for (let i = 0; i < 24; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = minTiles + Math.random() * (maxTiles - minTiles);
+      const x = Math.round(tx + Math.cos(a) * r);
+      const y = Math.round(ty + Math.sin(a) * r);
+      if (this.dungeon.isFloor(x, y) && this.dungeon.distance[y][x] >= 0) return this.toWorld({ x, y });
+    }
+    return null;
+  }
+
+  private puff(x: number, y: number, color: number) {
+    const p = this.add.particles(x, y, 'spark', {
+      speed: { min: 20, max: 80 },
+      scale: { start: 0.9, end: 0 },
+      alpha: { start: 0.9, end: 0 },
+      lifespan: 300,
+      tint: color,
+      emitting: false,
+    });
+    p.setDepth(13);
+    p.explode(10);
+    this.time.delayedCall(400, () => p.destroy());
+  }
+
+  // ---- Damage to the hero ----------------------------------------------------
+
+  private hurtPlayer(amount: number, fromX: number, fromY: number, color: string) {
+    if (this.run.health <= 0 || this.shop) return 0;
+    const dealt = this.player.takeDamage(amount, fromX, fromY);
+    if (dealt <= 0) return 0;
     this.hudDirty = true;
-    this.floatText(this.player.x, this.player.y - 26, `-${dealt}`, '#f0abfc', 14);
-    this.cameras.main.shake(100, 0.005);
+    this.floatText(this.player.x, this.player.y - 26, `-${dealt}`, color, 14);
+    this.cameras.main.shake(120, 0.006);
+    this.cameras.main.flash(80, 120, 0, 0);
     if (this.run.health <= 0) this.gameOver();
+    return dealt;
   }
 
   private enemyTouchesPlayer(enemy: Enemy) {
     if (!enemy.canAttack || this.run.health <= 0) return;
-    const dealt = this.player.takeDamage(enemy.damage, enemy.x, enemy.y);
+    const dealt = this.hurtPlayer(enemy.contactDamage, enemy.x, enemy.y, '#f87171');
     if (dealt <= 0) return;
     enemy.didAttack();
-    this.hudDirty = true;
-
-    this.floatText(this.player.x, this.player.y - 26, `-${dealt}`, '#f87171', 14);
-    this.cameras.main.shake(120, 0.006);
-    this.cameras.main.flash(80, 120, 0, 0);
-
-    if (this.run.health <= 0) this.gameOver();
   }
 
   /** Nearest active enemy within `range` whose bearing is inside ±halfAngle. */
@@ -550,7 +782,7 @@ export class GameScene extends Phaser.Scene {
     return best;
   }
 
-  // ---- Pickups & progression --------------------------------------------
+  // ---- Pickups, door & progression -----------------------------------------
 
   private collectPickup(item: Phaser.Physics.Arcade.Image) {
     if (this.time.now < (item.getData('readyAt') as number)) return;
@@ -577,12 +809,46 @@ export class GameScene extends Phaser.Scene {
         this.floatText(x, y - 10, `+${this.run.health - before} hp`, '#4ade80', 13);
         break;
       }
+      case 'key':
+        this.run.hasKey = true;
+        this.floatText(x, y - 12, 'Key taken!', '#fbbf24', 14);
+        emit(GAME_MESSAGE, { text: 'You have the key. Find the gate over the stairs.' });
+        if (this.door) {
+          this.tweens.add({ targets: this.door, alpha: 0.6, duration: 500, yoyo: true, repeat: -1 });
+        }
+        break;
     }
     this.hudDirty = true;
   }
 
+  private tryOpenDoor() {
+    if (!this.door || this.levelOver) return;
+    if (!this.run.hasKey) {
+      if (this.time.now > this.lockedMessageAt) {
+        this.lockedMessageAt = this.time.now + 1500;
+        this.floatText(this.door.x, this.door.y - 22, 'Locked', '#9ca3af', 12);
+        emit(GAME_MESSAGE, { text: 'Locked. Kill the enemy carrying the key.' });
+      }
+      return;
+    }
+    const door = this.door;
+    this.door = null;
+    door.body!.enable = false;
+    this.puff(door.x, door.y, 0xfbbf24);
+    this.floatText(door.x, door.y - 22, 'Unlocked!', '#fbbf24', 14);
+    emit(GAME_MESSAGE, { text: 'The gate is open. Descend when ready.' });
+    this.tweens.add({
+      targets: door,
+      alpha: 0,
+      scale: 1.3,
+      duration: 350,
+      ease: 'Quad.easeOut',
+      onComplete: () => door.destroy(),
+    });
+  }
+
   private descend() {
-    if (this.levelOver || this.run.health <= 0) return;
+    if (this.levelOver || this.run.health <= 0 || this.door) return;
     this.levelOver = true;
     this.player.setMoveInput(0, 0);
     this.floatText(this.player.x, this.player.y - 30, 'Descending...', '#fbbf24', 14);
@@ -590,11 +856,8 @@ export class GameScene extends Phaser.Scene {
 
     this.cameras.main.fadeOut(450, 0, 0, 0);
     this.cameras.main.once(Phaser.Cameras.Scene2D.Events.FADE_OUT_COMPLETE, () => {
-      // Rest at the merchant between floors. The scene stays alive (paused)
-      // so purchases mutate the live run state; leaving restarts the scene.
-      this.physics.pause();
-      this.shopOpen = true;
-      emit(GAME_SHOP, { ...this.run });
+      // Rest at the merchant between floors with a random three-item stock.
+      this.openShop('floor', rollOffers(this.run, FLOOR_SHOP_ITEMS));
     });
   }
 
@@ -603,6 +866,7 @@ export class GameScene extends Phaser.Scene {
       ...this.run,
       upgrades: { ...this.run.upgrades },
       depth: this.run.depth + 1,
+      hasKey: false,
       // A short rest between floors: a little health, full mana.
       health: Math.min(this.run.maxHealth, this.run.health + 10),
       mana: this.run.maxMana,
@@ -615,7 +879,7 @@ export class GameScene extends Phaser.Scene {
     this.player.die();
     this.physics.pause();
     this.cameras.main.shake(300, 0.01);
-    this.pushHud(true);
+    this.pushHud();
     emit(GAME_OVER, this.run);
   }
 
@@ -632,7 +896,7 @@ export class GameScene extends Phaser.Scene {
       }
       return;
     }
-    if (this.levelOver) return;
+    if (this.levelOver || this.shop) return;
 
     // Movement: joystick wins whenever it is active, otherwise keyboard.
     let vx = 0;
@@ -662,10 +926,16 @@ export class GameScene extends Phaser.Scene {
       }
     }
 
-    // Spitter bolts fizzle out after their lifetime.
+    // Projectiles fizzle out after their lifetime.
     for (const child of this.enemyBullets.getChildren().slice()) {
       const bullet = child as Phaser.Physics.Arcade.Image;
       if (bullet.active && time >= (bullet.getData('diesAt') as number)) bullet.destroy();
+    }
+
+    // The merchant re-arms once the hero has stepped away from the stall.
+    if (this.merchant && !this.merchantReady) {
+      const d = Phaser.Math.Distance.Between(this.player.x, this.player.y, this.merchant.x, this.merchant.y);
+      if (d > 60) this.merchantReady = true;
     }
 
     // Mana regen changes every frame; throttle HUD pushes to ~8/sec unless
@@ -673,10 +943,9 @@ export class GameScene extends Phaser.Scene {
     if (this.hudDirty || time >= this.nextHudAt) this.pushHud();
   }
 
-  private pushHud(force = false) {
+  private pushHud() {
     this.hudDirty = false;
     this.nextHudAt = this.time.now + 125;
-    void force;
     emit(GAME_UPDATE, { ...this.run });
   }
 

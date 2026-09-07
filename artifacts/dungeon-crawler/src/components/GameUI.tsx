@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Shield, Heart, Zap, Coins, RotateCcw, Sword, Flame, Skull, Layers } from 'lucide-react';
+import { Shield, Heart, Zap, Coins, RotateCcw, Sword, Flame, Skull, Layers, KeyRound } from 'lucide-react';
 import {
   GAME_ATTACK,
   GAME_INIT,
@@ -9,11 +9,14 @@ import {
   GAME_OVER,
   GAME_RESTART,
   GAME_SHOP,
+  GAME_SHOP_LEAVE,
   GAME_SPELL,
   GAME_UPDATE,
   createRunState,
   emit,
   type RunState,
+  type ShopEvent,
+  type ShopSession,
 } from '@/game/events';
 import { ShopUI } from '@/components/ShopUI';
 
@@ -22,7 +25,8 @@ const SPELL_COST = 20;
 export function GameUI() {
   const [run, setRun] = useState<RunState>(createRunState);
   const [gameOver, setGameOver] = useState(false);
-  const [shopOpen, setShopOpen] = useState(false);
+  const [shop, setShop] = useState<ShopSession | null>(null);
+  const shopOpen = shop !== null;
   const [banner, setBanner] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const isTouch = useIsTouchDevice();
@@ -31,12 +35,14 @@ export function GameUI() {
     const onInit = (e: Event) => {
       setRun((e as CustomEvent<RunState>).detail);
       setGameOver(false);
-      setShopOpen(false);
+      setShop(null);
     };
     const onShop = (e: Event) => {
-      setRun((e as CustomEvent<RunState>).detail);
-      setShopOpen(true);
+      const detail = (e as CustomEvent<ShopEvent>).detail;
+      setRun(detail.run);
+      setShop(detail.session);
     };
+    const onShopLeave = () => setShop(null);
     const onUpdate = (e: Event) => setRun((e as CustomEvent<RunState>).detail);
     const onOver = () => setGameOver(true);
 
@@ -61,6 +67,7 @@ export function GameUI() {
     window.addEventListener(GAME_LEVEL, onLevel);
     window.addEventListener(GAME_MESSAGE, onMessage);
     window.addEventListener(GAME_SHOP, onShop);
+    window.addEventListener(GAME_SHOP_LEAVE, onShopLeave);
     return () => {
       window.removeEventListener(GAME_INIT, onInit);
       window.removeEventListener(GAME_UPDATE, onUpdate);
@@ -68,6 +75,7 @@ export function GameUI() {
       window.removeEventListener(GAME_LEVEL, onLevel);
       window.removeEventListener(GAME_MESSAGE, onMessage);
       window.removeEventListener(GAME_SHOP, onShop);
+      window.removeEventListener(GAME_SHOP_LEAVE, onShopLeave);
       window.clearTimeout(bannerTimer);
       window.clearTimeout(messageTimer);
     };
@@ -111,10 +119,14 @@ export function GameUI() {
             <Layers className="w-4 h-4" />
             <span>Depth {run.depth}</span>
           </Pill>
+          <Pill className={run.hasKey ? 'text-yellow-300' : 'text-white/30'} testId="hud-key">
+            <KeyRound className="w-4 h-4" />
+            <span>{run.hasKey ? 'Key' : 'No key'}</span>
+          </Pill>
         </div>
       </div>
 
-      {shopOpen && !gameOver && <ShopUI run={run} />}
+      {shop && !gameOver && <ShopUI run={run} session={shop} />}
 
       {/* Depth banner on floor entry */}
       {banner && !gameOver && !shopOpen && (
@@ -129,7 +141,7 @@ export function GameUI() {
       {!gameOver && !shopOpen && (
         <div className="absolute top-[8.75rem] sm:top-2 left-1/2 -translate-x-1/2">
           <div className="bg-black/40 px-4 py-1 rounded-full text-xs text-white/70 border border-white/5 backdrop-blur-sm whitespace-nowrap">
-            {message ?? 'Clear the cave, grab the loot, find the stairs'}
+            {message ?? 'Find the key-bearer, unlock the gate, descend'}
           </div>
         </div>
       )}

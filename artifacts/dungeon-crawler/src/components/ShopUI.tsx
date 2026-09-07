@@ -11,8 +11,8 @@ import {
   Clover,
   Dumbbell,
 } from 'lucide-react';
-import { GAME_BUY, GAME_SHOP_LEAVE, emit, type RunState } from '@/game/events';
-import { getOffers, type Offer, type ShopItemId } from '@/game/shop';
+import { GAME_BUY, GAME_SHOP_LEAVE, emit, type RunState, type ShopSession } from '@/game/events';
+import { getOffers, isShopItemId, type Offer, type ShopItemId } from '@/game/shop';
 
 const ICONS: Record<ShopItemId, React.ReactNode> = {
   weapon: <Sword className="w-5 h-5" />,
@@ -37,24 +37,35 @@ const ACCENT: Record<ShopItemId, string> = {
 };
 
 /**
- * The merchant between floors. Phaser owns the coins and applies purchases;
- * this screen only renders offers and dispatches intents.
+ * A shop screen. Between floors the merchant stocks three random items; the
+ * wandering merchant found in deeper caves stocks two. Phaser owns the coins
+ * and applies purchases; this screen only renders offers and dispatches
+ * intents.
  */
-export function ShopUI({ run }: { run: RunState }) {
-  const offers = getOffers(run);
+export function ShopUI({ run, session }: { run: RunState; session: ShopSession }) {
+  const ids = session.offers.filter(isShopItemId);
+  const offers = getOffers(run, ids);
   const nextDepth = run.depth + 1;
+  const isFloor = session.kind === 'floor';
 
   return (
     <div
       className="absolute inset-0 bg-black/85 backdrop-blur-sm pointer-events-auto z-40 flex flex-col"
       data-testid="shop"
+      data-shop-kind={session.kind}
     >
       <div className="flex items-center justify-between px-4 pt-4 pb-2 sm:px-8 sm:pt-6">
         <div>
-          <div className="text-amber-300 text-xs uppercase tracking-[0.3em]">Merchant</div>
-          <h2 className="text-2xl sm:text-3xl font-black text-white">Rest before depth {nextDepth}</h2>
+          <div className="text-amber-300 text-xs uppercase tracking-[0.3em]">
+            {isFloor ? 'Merchant' : 'Wandering Merchant'}
+          </div>
+          <h2 className="text-2xl sm:text-3xl font-black text-white">
+            {isFloor ? `Rest before depth ${nextDepth}` : 'A stall in the dark'}
+          </h2>
           <p className="text-white/50 text-xs sm:text-sm mt-1">
-            Enemies below hit harder and move faster. Spend your coins wisely.
+            {isFloor
+              ? 'Only three wares tonight. Enemies below hit harder and move faster.'
+              : 'Two wares, take them or leave them. He will not be here on the next floor.'}
           </p>
         </div>
         <div
@@ -67,7 +78,7 @@ export function ShopUI({ run }: { run: RunState }) {
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 sm:px-8 pb-4 overscroll-contain" style={{ touchAction: 'pan-y' }}>
-        <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 max-w-6xl mx-auto">
+        <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 max-w-4xl mx-auto">
           {offers.map((offer) => (
             <OfferCard key={offer.id} offer={offer} />
           ))}
@@ -82,7 +93,7 @@ export function ShopUI({ run }: { run: RunState }) {
           data-testid="button-descend"
         >
           <ArrowDownToLine className="w-6 h-6" />
-          Descend to depth {nextDepth}
+          {isFloor ? `Descend to depth ${nextDepth}` : 'Back to the cave'}
         </button>
       </div>
     </div>
