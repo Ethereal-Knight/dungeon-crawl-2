@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Shield, Heart, Zap, Coins, RotateCcw, Sword, Flame, Skull, Layers, KeyRound } from 'lucide-react';
+import { Shield, Heart, Zap, Coins, RotateCcw, Sword, Flame, Skull, Layers, KeyRound, Share2 } from 'lucide-react';
 import {
   GAME_ATTACK,
   GAME_INIT,
@@ -22,6 +22,17 @@ import { ShopUI } from '@/components/ShopUI';
 
 const SPELL_COST = 20;
 
+async function captureGameImage(): Promise<File | null> {
+  const canvas = document.querySelector<HTMLCanvasElement>('[data-testid="game-canvas-container"] canvas');
+  if (!canvas) return null;
+
+  return new Promise((resolve) => {
+    canvas.toBlob((blob) => {
+      resolve(blob ? new File([blob], 'dungeon-crawl-challenge.png', { type: 'image/png' }) : null);
+    }, 'image/png');
+  });
+}
+
 export function GameUI() {
   const [run, setRun] = useState<RunState>(createRunState);
   const [gameOver, setGameOver] = useState(false);
@@ -29,6 +40,7 @@ export function GameUI() {
   const shopOpen = shop !== null;
   const [banner, setBanner] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [shareStatus, setShareStatus] = useState<string | null>(null);
   const isTouch = useIsTouchDevice();
 
   useEffect(() => {
@@ -36,6 +48,7 @@ export function GameUI() {
       setRun((e as CustomEvent<RunState>).detail);
       setGameOver(false);
       setShop(null);
+      setShareStatus(null);
     };
     const onShop = (e: Event) => {
       const detail = (e as CustomEvent<ShopEvent>).detail;
@@ -84,6 +97,44 @@ export function GameUI() {
   const healthPct = (Math.max(0, run.health) / run.maxHealth) * 100;
   const manaPct = (Math.max(0, run.mana) / run.maxMana) * 100;
   const spellReady = run.mana >= SPELL_COST;
+
+  const shareChallenge = async () => {
+    const playUrl = `${window.location.origin}${window.location.pathname}`;
+    const challengeText = [
+      `I reached Depth ${run.depth} in Dungeon Crawl!`,
+      `Stats: ${run.kills} kills • ${run.coins} coins • ${run.armor}/${run.maxArmor} armor.`,
+      'Can you beat my run?',
+    ].join('\n');
+    const gameImage = await captureGameImage();
+    const shareData: ShareData = {
+      title: 'Dungeon Crawl Challenge',
+      text: challengeText,
+      url: playUrl,
+    };
+
+    if (gameImage && navigator.canShare?.({ files: [gameImage] })) {
+      shareData.files = [gameImage];
+    }
+
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+        setShareStatus('Challenge ready to send.');
+        return;
+      }
+
+      const copyText = `${challengeText}\n${playUrl}`;
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(copyText);
+        setShareStatus('Challenge copied — paste it into a message.');
+      } else {
+        setShareStatus('Sharing is not available in this browser.');
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      setShareStatus('Could not open sharing. Try again.');
+    }
+  };
 
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden z-10 select-none">
@@ -164,14 +215,29 @@ export function GameUI() {
             <Stat label="Coins" value={run.coins} />
             <Stat label="Kills" value={run.kills} />
           </div>
-          <button
-            onClick={() => emit(GAME_RESTART)}
-            className="flex items-center gap-2 bg-red-600 hover:bg-red-500 text-white px-6 py-3 rounded-full font-bold transition-all active:scale-95"
-            data-testid="button-restart"
-          >
-            <RotateCcw className="w-5 h-5" />
-            Try Again
-          </button>
+          <div className="flex flex-col items-center gap-2">
+            <button
+              onClick={shareChallenge}
+              className="flex items-center gap-2 bg-amber-500 hover:bg-amber-400 text-black px-6 py-3 rounded-full font-bold transition-all active:scale-95"
+              data-testid="button-share-challenge"
+            >
+              <Share2 className="w-5 h-5" />
+              Challenge a Friend
+            </button>
+            <button
+              onClick={() => emit(GAME_RESTART)}
+              className="flex items-center gap-2 bg-red-600 hover:bg-red-500 text-white px-6 py-3 rounded-full font-bold transition-all active:scale-95"
+              data-testid="button-restart"
+            >
+              <RotateCcw className="w-5 h-5" />
+              Try Again
+            </button>
+            {shareStatus && (
+              <p className="max-w-xs text-center text-xs text-white/60" aria-live="polite">
+                {shareStatus}
+              </p>
+            )}
+          </div>
           {!isTouch && <p className="mt-3 text-xs text-white/40">or press R</p>}
         </div>
       )}
