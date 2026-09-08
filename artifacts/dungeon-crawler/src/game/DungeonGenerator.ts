@@ -304,7 +304,7 @@ export class DungeonGenerator {
           this.items.push({ ...p, kind: 'gem' });
         }
       }
-      if (Math.random() < 0.15) {
+      if (Math.random() < 0.15 * 1.12) {
         const p = pick(room);
         if (p) {
           claim(p);
