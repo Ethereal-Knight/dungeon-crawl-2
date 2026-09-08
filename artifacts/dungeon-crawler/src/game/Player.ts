@@ -13,6 +13,7 @@ export const SPELL_SPEED = 320;
 const MOVE_SPEED = 165;
 const ATTACK_MOVE_FACTOR = 0.45;
 const INVULN_MS = 700;
+const BASE_SWORD_RANGE = 48;
 /** Knockback speed above which the hero plays the skid animation. */
 const KNOCKBACK_ANIM_SPEED = 40;
 
@@ -103,6 +104,7 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
     });
 
     // Slash arc flashes in front of the hero.
+    const slashReachScale = this.stats.swordRange / BASE_SWORD_RANGE;
     const slash = this.scene.add
       .image(
         this.x + Math.cos(this.facing) * 10,
@@ -111,11 +113,11 @@ export class Player extends Phaser.Physics.Arcade.Sprite {
       )
       .setRotation(this.facing)
       .setDepth(12)
-      .setScale(0.6)
+      .setScale(0.6 * slashReachScale)
       .setAlpha(0.85);
     this.scene.tweens.add({
       targets: slash,
-      scale: 1.05,
+      scale: 1.05 * slashReachScale,
       alpha: 0,
       duration: 180,
       ease: 'Quad.easeOut',
