@@ -594,9 +594,36 @@ export class GameScene extends Phaser.Scene {
   /** Scatters `count` coins; each is gold with the luck-adjusted chance. */
   private dropCoins(x: number, y: number, count: number, goldBonus = 0) {
     const { goldChance } = this.player.stats;
+    const dropSpot = this.nearestFloorDrop(x, y);
     for (let i = 0; i < count; i++) {
-      this.addPickup(x, y, Math.random() < goldChance + goldBonus ? 'coin' : 'silver', true);
+      this.addPickup(
+        dropSpot.x,
+        dropSpot.y,
+        Math.random() < goldChance + goldBonus ? 'coin' : 'silver',
+        true,
+      );
     }
+  }
+
+  /** Returns the nearest reachable floor tile so phased enemies cannot drop loot in walls. */
+  private nearestFloorDrop(wx: number, wy: number) {
+    const tx = Math.floor(wx / TILE);
+    const ty = Math.floor(wy / TILE);
+    let best: { x: number; y: number } | null = null;
+    let bestDistance = Infinity;
+
+    for (let y = ty - 4; y <= ty + 4; y++) {
+      for (let x = tx - 4; x <= tx + 4; x++) {
+        if (!this.dungeon.isFloor(x, y) || this.dungeon.distance[y][x] < 0) continue;
+        const distance = Math.abs(x - tx) + Math.abs(y - ty);
+        if (distance < bestDistance) {
+          best = { x, y };
+          bestDistance = distance;
+        }
+      }
+    }
+
+    return this.toWorld(best ?? this.dungeon.startPos);
   }
 
   private hitChest(chest: Phaser.Physics.Arcade.Image) {
