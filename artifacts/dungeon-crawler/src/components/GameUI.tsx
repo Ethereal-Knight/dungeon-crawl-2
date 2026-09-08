@@ -255,7 +255,7 @@ export function GameUI() {
                 event={GAME_SPELL}
                 repeatMs={380}
                 disabled={!spellReady}
-                className="w-16 h-16 sm:w-20 sm:h-20 border-sky-400/60 bg-sky-500/20 active:bg-sky-500/40 text-sky-200 mb-6"
+                className="w-20 h-20 sm:w-24 sm:h-24 border-sky-400/60 bg-sky-500/[0.12] active:bg-sky-500/[0.24] text-sky-200 mb-6"
                 testId="button-spell"
                 label="Cast fireball"
               >
@@ -265,7 +265,7 @@ export function GameUI() {
               <HoldButton
                 event={GAME_ATTACK}
                 repeatMs={280}
-                className="w-24 h-24 sm:w-28 sm:h-28 border-red-500/60 bg-red-500/20 active:bg-red-500/40 text-red-200"
+                className="w-28 h-28 sm:w-32 sm:h-32 border-red-500/60 bg-red-500/[0.12] active:bg-red-500/[0.24] text-red-200"
                 testId="button-attack"
                 label="Sword attack"
               >
