@@ -1,0 +1,1 @@
+- [GitHub workflow authorization](github-workflow-authorization.md) — automatic Pages workflow stays omitted until the pushing credential has workflow scope.
