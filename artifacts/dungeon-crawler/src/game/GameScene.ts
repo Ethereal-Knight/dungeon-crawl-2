@@ -21,6 +21,7 @@ import {
   GAME_LEVEL,
   GAME_MESSAGE,
   GAME_OVER,
+  GAME_PAUSE,
   GAME_RESTART,
   GAME_SHOP,
   GAME_SHOP_LEAVE,
@@ -72,6 +73,7 @@ export class GameScene extends Phaser.Scene {
   private hudDirty = true;
   private nextHudAt = 0;
   private levelOver = false;
+  private paused = false;
   private shop: ShopSession | null = null;
   private caveOffers: ShopItemId[] = [];
   private merchantReady = true;
@@ -85,6 +87,7 @@ export class GameScene extends Phaser.Scene {
     this.run = data.run ?? createRunState();
     this.run.hasKey = false;
     this.levelOver = false;
+    this.paused = false;
     this.shop = null;
     this.door = null;
     this.merchant = null;
@@ -370,6 +373,7 @@ export class GameScene extends Phaser.Scene {
     window.addEventListener(GAME_JOYSTICK, this.onJoystick);
     window.addEventListener(GAME_BUY, this.onBuy);
     window.addEventListener(GAME_SHOP_LEAVE, this.onShopLeave);
+    window.addEventListener(GAME_PAUSE, this.onPause);
   }
 
   // ---- Bridge handlers (arrow functions keep `this` bound) -------------
@@ -377,6 +381,22 @@ export class GameScene extends Phaser.Scene {
   private onAttack = () => this.swordAttack();
   private onSpell = () => this.castSpell();
   private onRestart = () => this.restartRun();
+  /**
+   * The pause menu freezes the whole scene (physics, enemy thinking, tweens
+   * and timers) so nothing sneaks up while the player reads their stats.
+   */
+  private onPause = (e: Event) => {
+    const paused = (e as CustomEvent<{ paused: boolean }>).detail?.paused ?? false;
+    if (paused === this.paused) return;
+    this.paused = paused;
+    if (paused) {
+      this.player.setMoveInput(0, 0);
+      this.joystick.set(0, 0);
+      this.scene.pause();
+    } else {
+      this.scene.resume();
+    }
+  };
   private onJoystick = (e: Event) => {
     const d = (e as CustomEvent<{ x: number; y: number }>).detail;
     this.joystick.set(d?.x ?? 0, d?.y ?? 0);
@@ -911,6 +931,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   private restartRun() {
+    if (this.paused) {
+      this.paused = false;
+      this.scene.resume();
+    }
     this.scene.restart({ run: createRunState() } satisfies SceneData);
   }
 
@@ -1022,6 +1046,7 @@ export class GameScene extends Phaser.Scene {
     window.removeEventListener(GAME_JOYSTICK, this.onJoystick);
     window.removeEventListener(GAME_BUY, this.onBuy);
     window.removeEventListener(GAME_SHOP_LEAVE, this.onShopLeave);
+    window.removeEventListener(GAME_PAUSE, this.onPause);
     this.scale.off(Phaser.Scale.Events.RESIZE, this.fitCamera, this);
     this.joystick.set(0, 0);
   }

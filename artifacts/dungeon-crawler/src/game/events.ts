@@ -77,6 +77,7 @@ export const GAME_RESTART = 'game-restart';
 export const GAME_JOYSTICK = 'game-joystick'; // detail: { x, y } in -1..1
 export const GAME_BUY = 'game-buy'; // detail: { id: ShopItemId }
 export const GAME_SHOP_LEAVE = 'game-shop-leave'; // continue to the next floor
+export const GAME_PAUSE = 'game-pause'; // detail: { paused: boolean } — the pause menu opened or closed
 
 export function emit<T>(name: string, detail?: T) {
   window.dispatchEvent(new CustomEvent(name, { detail }));

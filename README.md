@@ -167,6 +167,7 @@ hits show "blocked" in grey.
 | Move | Arrow keys or `W` `A` `S` `D` | Touch and drag anywhere in the lower half of the screen |
 | Sword | `Space` or `J` | Tap or hold the red sword button |
 | Fireball | `F`, `K`, `E` or `Shift` | Tap or hold the blue flame button |
+| Pause and show stats | `Esc` or `P` | Tap the pause button on the header bar |
 | Restart after death | `R` or `Enter` | Tap **Try Again** |
 
 The touch joystick is dynamic: its origin appears where the first touch lands
@@ -176,9 +177,38 @@ layer above the movement surface so the two never compete for a pointer. The
 joystick affordance and the desktop keyboard legend switch automatically based
 on whether the device has a coarse (touch) pointer.
 
-The HUD is rendered by React. It shows health and mana bars with numbers,
-coins, armor, current depth, a floor banner on entry, a transient status line
-(for example "Floor cleared! Find the stairs."), and the game-over overlay.
+The HUD is rendered by React. A single header bar holds the health and mana
+meters with their current values, armor, coins, depth, the key indicator and
+a pause button, so the cave stays visible underneath on a phone. Below it are
+a floor banner on entry, a transient status line (for example "Floor
+cleared! Find the stairs."), and the game-over overlay.
+
+### Pause menu and the 3D hero
+
+Pausing freezes the whole scene (physics, enemy thinking, tweens and timers)
+and opens the character sheet: vitals (health, mana, armor, coins, depth,
+kills, key), combat numbers from `derive()` (sword damage, reach and swing
+time, fireball damage, range and cost, mana regen, gold, gem and extra-coin
+odds) and every upgrade track with its level. **New run** restarts from
+depth 1.
+
+Beside the sheet stands a 3D Wren, modelled from smooth primitives (capsules, spheres, lathes and bevelled blade profiles) with physically based materials, an environment map and cast shadows, in
+`src/game/hero/heroModel.ts` with three.js (loaded on first open, so it is
+not part of the gameplay bundle) and rendered by `HeroModel.tsx`. Drag to
+turn it. Everything the merchant sells shows on the model:
+
+| Purchase | On the model |
+| --- | --- |
+| Weapon tier | The sword in hand: rusty short blade, iron, steel longsword with a fuller, runed blade with glowing runes, then the curved ember-lit Dragonfang; each +N enchantment adds drifting embers |
+| Armor tier | Garments over the tunic: crossed leather straps and bracers, a studded chainmail shirt, plate with tassets, knee plates and a second pauldron, then luminous mithril with rune lines; +N enchantments glow harder |
+| Vitality | A heart amulet on the chest, larger per level |
+| Focus | Mana crystals orbiting the rune gauntlet, one per level up to six; the gauntlet rune burns brighter |
+| Far Sight | A gold circlet on the hood with an amber eye gem |
+| Luck | Clover charms hanging from the belt, one per level up to five |
+| Strength | Red bands wrapped round the sword arm, one per level up to four |
+
+The model is rebuilt only when gear changes (`gearSignature()`), and falls
+back to the 2D sprite when WebGL is unavailable.
 
 ## Why Phaser
 
@@ -224,6 +254,7 @@ in `src/game/events.ts`:
 | `game-message` | Phaser → React | Short status text such as "Floor cleared" |
 | `game-over` | Phaser → React | The hero died; show the death screen |
 | `game-shop` | Phaser → React | A shop opened or its stock changed; carries the run state and the session (`floor` or `cave`, plus the offered item ids) |
+| `game-pause` | React → Phaser | Pause menu opened or closed; the scene pauses or resumes entirely |
 | `game-attack` | React → Phaser | Requests a sword swing |
 | `game-spell` | React → Phaser | Requests a fireball |
 | `game-buy` | React → Phaser | Requests a purchase by item id |
@@ -314,6 +345,13 @@ The Dungeon Crawler's main files are:
   death flow, hold-to-repeat action buttons, and dynamic touch joystick.
 - `artifacts/dungeon-crawler/src/components/ShopUI.tsx` — the merchant
   screen shown between floors.
+- `artifacts/dungeon-crawler/src/components/PauseMenu.tsx` — the pause
+  screen: full character sheet next to the 3D hero.
+- `artifacts/dungeon-crawler/src/components/HeroModel.tsx` — mounts the
+  lazily loaded three.js hero viewer.
+- `artifacts/dungeon-crawler/src/game/hero/heroModel.ts` — the 3D Wren:
+  body, garments per armor tier, sword per weapon tier, and one visible
+  ornament per upgrade track.
 - `artifacts/dungeon-crawler/src/index.css` — dark game shell, typography,
   full-screen layout, and touch/scroll constraints.
 - `artifacts/dungeon-crawler/vite.config.ts` — Vite root, aliases, base path,
@@ -321,9 +359,9 @@ The Dungeon Crawler's main files are:
 
 The package manifest at
 `artifacts/dungeon-crawler/package.json` is the source of truth for the
-Dungeon Crawler's package scripts and dependencies. Phaser is its runtime
-dependency; React, Vite, Tailwind CSS, and the UI dependencies are part of the
-browser shell.
+Dungeon Crawler's package scripts and dependencies. Phaser and three.js
+(pause-menu hero only, code-split) are its runtime dependencies; React, Vite,
+Tailwind CSS, and the UI dependencies are part of the browser shell.
 
 ## Development
 

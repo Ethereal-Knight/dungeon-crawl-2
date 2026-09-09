@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Shield, Heart, Zap, Coins, RotateCcw, Sword, Flame, Skull, Layers, KeyRound, Share2 } from 'lucide-react';
+import { Shield, Heart, Zap, Coins, RotateCcw, Sword, Flame, Skull, Layers, KeyRound, Share2, Pause } from 'lucide-react';
 import {
   GAME_ATTACK,
   GAME_INIT,
@@ -7,6 +7,7 @@ import {
   GAME_LEVEL,
   GAME_MESSAGE,
   GAME_OVER,
+  GAME_PAUSE,
   GAME_RESTART,
   GAME_SHOP,
   GAME_SHOP_LEAVE,
@@ -19,6 +20,7 @@ import {
   type ShopSession,
 } from '@/game/events';
 import { ShopUI } from '@/components/ShopUI';
+import { PauseMenu } from '@/components/PauseMenu';
 
 const SPELL_COST = 20;
 
@@ -41,7 +43,13 @@ export function GameUI() {
   const [banner, setBanner] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [shareStatus, setShareStatus] = useState<string | null>(null);
+  const [paused, setPausedState] = useState(false);
   const isTouch = useIsTouchDevice();
+
+  const setPaused = useCallback((next: boolean) => {
+    setPausedState(next);
+    emit(GAME_PAUSE, { paused: next });
+  }, []);
 
   useEffect(() => {
     const onInit = (e: Event) => {
@@ -49,6 +57,7 @@ export function GameUI() {
       setGameOver(false);
       setShop(null);
       setShareStatus(null);
+      setPausedState(false);
     };
     const onShop = (e: Event) => {
       const detail = (e as CustomEvent<ShopEvent>).detail;
@@ -94,6 +103,19 @@ export function GameUI() {
     };
   }, []);
 
+  // Escape or P toggles the pause menu whenever the cave is actually running.
+  const canPause = !gameOver && !shopOpen;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' && e.key.toLowerCase() !== 'p') return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (paused) setPaused(false);
+      else if (canPause) setPaused(true);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [paused, canPause, setPaused]);
+
   const healthPct = (Math.max(0, run.health) / run.maxHealth) * 100;
   const manaPct = (Math.max(0, run.mana) / run.maxMana) * 100;
   const spellReady = run.mana >= SPELL_COST;
@@ -138,49 +160,66 @@ export function GameUI() {
 
   return (
     <div className="absolute inset-0 pointer-events-none overflow-hidden z-10 select-none">
-      {/* HUD */}
-      <div className="p-3 sm:p-4 flex justify-between items-start">
-        <div className="flex flex-col gap-2">
-          <Bar
-            icon={<Heart className="w-4 h-4 text-red-500 fill-red-500" />}
+      {/* HUD: one header bar with everything on it */}
+      <div className="p-2 sm:p-3">
+        <div
+          className="max-w-2xl flex items-center gap-1.5 sm:gap-3 bg-black/60 border border-white/10 rounded-full pl-2.5 pr-1.5 py-1 sm:py-1.5 backdrop-blur-sm text-[11px] sm:text-xs font-bold"
+          data-testid="hud-bar"
+        >
+          <MiniBar
+            icon={<Heart className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-red-500 fill-red-500" />}
             pct={healthPct}
             color="bg-red-500"
-            label={`${Math.ceil(run.health)}/${run.maxHealth}`}
+            label={`${Math.ceil(run.health)}`}
+            title={`Health ${Math.ceil(run.health)} of ${run.maxHealth}`}
             testId="hud-health"
           />
-          <Bar
-            icon={<Zap className="w-4 h-4 text-sky-400 fill-sky-400" />}
+          <MiniBar
+            icon={<Zap className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-sky-400 fill-sky-400" />}
             pct={manaPct}
             color={spellReady ? 'bg-sky-500' : 'bg-sky-800'}
-            label={`${Math.floor(run.mana)}/${run.maxMana}`}
+            label={`${Math.floor(run.mana)}`}
+            title={`Mana ${Math.floor(run.mana)} of ${run.maxMana}`}
             testId="hud-mana"
           />
-        </div>
-
-        <div className="flex flex-col gap-2 items-end">
-          <Pill className="text-yellow-400" testId="hud-coins">
-            <Coins className="w-4 h-4 fill-yellow-400" />
-            <span>{run.coins}</span>
-          </Pill>
-          <Pill className="text-gray-300" testId="hud-armor">
-            <Shield className="w-4 h-4" />
+          <Chip className="text-gray-300" title={`Armor ${run.armor} of ${run.maxArmor}`} testId="hud-armor">
+            <Shield className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
             <span>{run.armor}</span>
-          </Pill>
-          <Pill className="text-amber-200" testId="hud-depth">
-            <Layers className="w-4 h-4" />
-            <span>Depth {run.depth}</span>
-          </Pill>
-          <Pill className={run.hasKey ? 'text-yellow-300' : 'text-white/30'} testId="hud-key">
-            <KeyRound className="w-4 h-4" />
-            <span>{run.hasKey ? 'Key' : 'No key'}</span>
-          </Pill>
+          </Chip>
+          <Chip className="text-yellow-400" title={`${run.coins} coins`} testId="hud-coins">
+            <Coins className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-yellow-400" />
+            <span>{run.coins}</span>
+          </Chip>
+          <Chip className="text-amber-200" title={`Depth ${run.depth}`} testId="hud-depth">
+            <Layers className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            <span>
+              <span className="hidden sm:inline">Depth </span>
+              {run.depth}
+            </span>
+          </Chip>
+          <Chip className={run.hasKey ? 'text-yellow-300' : 'text-white/25'} title={run.hasKey ? 'Carrying the gate key' : 'No key yet'} testId="hud-key">
+            <KeyRound className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+            <span className="hidden sm:inline">{run.hasKey ? 'Key' : 'No key'}</span>
+          </Chip>
+          <button
+            type="button"
+            onClick={() => setPaused(true)}
+            disabled={!canPause}
+            className="pointer-events-auto ml-auto shrink-0 flex items-center justify-center w-7 h-7 sm:w-8 sm:h-8 rounded-full bg-white/10 hover:bg-white/20 text-white/80 transition-all active:scale-95 disabled:opacity-30"
+            aria-label="Pause and show stats"
+            data-testid="button-pause"
+          >
+            <Pause className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-current" />
+          </button>
         </div>
       </div>
+
+      {paused && !gameOver && !shopOpen && <PauseMenu run={run} onResume={() => setPaused(false)} />}
 
       {shop && !gameOver && <ShopUI run={run} session={shop} />}
 
       {/* Depth banner on floor entry */}
-      {banner && !gameOver && !shopOpen && (
+      {banner && !gameOver && !shopOpen && !paused && (
         <div className="absolute inset-x-0 top-1/4 flex justify-center animate-in fade-in zoom-in-95 duration-300">
           <div className="text-3xl sm:text-4xl font-black tracking-widest text-amber-300 drop-shadow-[0_2px_12px_rgba(0,0,0,0.9)]">
             {banner.toUpperCase()}
@@ -189,19 +228,20 @@ export function GameUI() {
       )}
 
       {/* Transient status line */}
-      {!gameOver && !shopOpen && (
-        <div className="absolute top-[8.75rem] sm:top-2 left-1/2 -translate-x-1/2">
-          <div className="bg-black/40 px-4 py-1 rounded-full text-xs text-white/70 border border-white/5 backdrop-blur-sm whitespace-nowrap">
+      {!gameOver && !shopOpen && !paused && (
+        <div className="absolute top-12 sm:top-16 left-1/2 -translate-x-1/2 max-w-[92vw]">
+          <div className="bg-black/40 px-4 py-1 rounded-full text-xs text-white/70 border border-white/5 backdrop-blur-sm whitespace-nowrap overflow-hidden text-ellipsis">
             {message ?? 'Find the key-bearer, unlock the gate, descend'}
           </div>
         </div>
       )}
 
       {/* Keyboard legend for desktop */}
-      {!isTouch && !gameOver && !shopOpen && (
+      {!isTouch && !gameOver && !shopOpen && !paused && (
         <div className="absolute bottom-4 left-4 text-[11px] leading-5 text-white/50 font-mono bg-black/40 px-3 py-2 rounded-lg border border-white/5">
           <div><Key>WASD</Key> / <Key>Arrows</Key> move</div>
           <div><Key>Space</Key> sword &nbsp; <Key>F</Key> / <Key>Shift</Key> fireball</div>
+          <div><Key>Esc</Key> / <Key>P</Key> pause &amp; stats</div>
         </div>
       )}
 
@@ -243,7 +283,7 @@ export function GameUI() {
       )}
 
       {/* Touch controls */}
-      {!gameOver && !shopOpen && (
+      {!gameOver && !shopOpen && !paused && (
         <>
           <Joystick visible={isTouch} />
           <div className="absolute inset-0 pointer-events-none z-30">
@@ -281,49 +321,52 @@ export function GameUI() {
 
 // ---- Pieces ----------------------------------------------------------------
 
-function Bar({
+function MiniBar({
   icon,
   pct,
   color,
   label,
+  title,
   testId,
 }: {
   icon: React.ReactNode;
   pct: number;
   color: string;
   label: string;
+  title: string;
   testId: string;
 }) {
   return (
-    <div
-      className="flex items-center gap-2 bg-black/60 px-3 py-1.5 rounded-full border border-white/10 backdrop-blur-sm"
-      data-testid={testId}
-    >
-      {icon}
-      <div className="relative w-28 h-2.5 bg-black/50 rounded-full overflow-hidden">
+    <div className="flex items-center gap-1 sm:gap-1.5 min-w-0 flex-1 basis-0" data-testid={testId} title={title} aria-label={title}>
+      <span className="shrink-0">{icon}</span>
+      <div className="relative min-w-6 flex-1 max-w-32 h-2 sm:h-2.5 bg-black/50 rounded-full overflow-hidden">
         <div
           className={`h-full ${color} transition-all duration-150`}
           style={{ width: `${Math.max(0, Math.min(100, pct))}%` }}
         />
       </div>
-      <span className="text-[10px] text-white/60 font-mono w-12 text-right">{label}</span>
+      <span className="text-[10px] sm:text-[11px] text-white/70 font-mono tabular-nums w-6 sm:w-7 text-right shrink-0">{label}</span>
     </div>
   );
 }
 
-function Pill({
+function Chip({
   children,
   className,
+  title,
   testId,
 }: {
   children: React.ReactNode;
   className?: string;
+  title: string;
   testId?: string;
 }) {
   return (
     <div
-      className={`flex items-center gap-2 bg-black/60 px-3 py-1.5 rounded-full border border-white/10 backdrop-blur-sm font-bold text-sm ${className ?? ''}`}
+      className={`flex items-center gap-1 shrink-0 tabular-nums ${className ?? ''}`}
       data-testid={testId}
+      title={title}
+      aria-label={title}
     >
       {children}
     </div>
