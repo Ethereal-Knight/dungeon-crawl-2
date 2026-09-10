@@ -186,21 +186,28 @@ cleared! Find the stairs."), and the game-over overlay.
 ### Pause menu and the 3D hero
 
 Pausing freezes the whole scene (physics, enemy thinking, tweens and timers)
-and opens the character sheet: vitals (health, mana, armor, coins, depth,
-kills, key), combat numbers from `derive()` (sword damage, reach and swing
-time, fireball damage, range and cost, mana regen, gold, gem and extra-coin
-odds) and every upgrade track with its level. **New run** restarts from
-depth 1.
+and opens a character sheet in the style of a dark-fantasy hero card: gold
+frame, Cinzel display type, and a full-height 3D hero beside the sheet. The
+sheet shows the run (depth, coins, kills, key), six ten-segment stat bars
+(health, mana, armor, might, arcana, fortune), three ability entries with
+the live numbers from `derive()` (Cleave, Fireball, Keybearer), and a row
+of gear and charm slots: weapon tier, armor tier and one slot per upgrade
+track with its level. **New run** restarts from depth 1.
 
-Beside the sheet stands a 3D Wren, modelled from smooth primitives (capsules, spheres, lathes and bevelled blade profiles) with physically based materials, an environment map and cast shadows, in
-`src/game/hero/heroModel.ts` with three.js (loaded on first open, so it is
-not part of the gameplay bundle) and rendered by `HeroModel.tsx`. Drag to
-turn it. Everything the merchant sells shows on the model:
+The hero is Wren, modelled from smooth primitives (capsules, spheres,
+lathes and bevelled blade profiles) with physically based materials, an
+environment map and cast shadows, in `src/game/hero/heroModel.ts` with
+three.js (loaded on first open, so it is not part of the gameplay bundle)
+and rendered by `HeroModel.tsx`. Wren stands in a procedural torchlit
+corridor: wet cobbles, brick walls, a stone arch fading into fog, two
+flickering torches with real point lights, and drifting dust. Drag to turn
+the hero; the set stays put. Everything the merchant sells shows on the
+model:
 
 | Purchase | On the model |
 | --- | --- |
 | Weapon tier | The sword in hand: rusty short blade, iron, steel longsword with a fuller, runed blade with glowing runes, then the curved ember-lit Dragonfang; each +N enchantment adds drifting embers |
-| Armor tier | Garments over the tunic: crossed leather straps and bracers, a studded chainmail shirt, plate with tassets, knee plates and a second pauldron, then luminous mithril with rune lines; +N enchantments glow harder |
+| Armor tier | Garments over the tunic: crossed leather straps and bracers, a chainmail shirt with a ring texture, plate with tassets, knee plates and a second pauldron, then luminous mithril with rune lines; +N enchantments glow harder |
 | Vitality | A heart amulet on the chest, larger per level |
 | Focus | Mana crystals orbiting the rune gauntlet, one per level up to six; the gauntlet rune burns brighter |
 | Far Sight | A gold circlet on the hood with an amber eye gem |
@@ -350,8 +357,8 @@ The Dungeon Crawler's main files are:
 - `artifacts/dungeon-crawler/src/components/HeroModel.tsx` — mounts the
   lazily loaded three.js hero viewer.
 - `artifacts/dungeon-crawler/src/game/hero/heroModel.ts` — the 3D Wren:
-  body, garments per armor tier, sword per weapon tier, and one visible
-  ornament per upgrade track.
+  body, garments per armor tier, sword per weapon tier, one visible
+  ornament per upgrade track, and the torchlit corridor set.
 - `artifacts/dungeon-crawler/src/index.css` — dark game shell, typography,
   full-screen layout, and touch/scroll constraints.
 - `artifacts/dungeon-crawler/vite.config.ts` — Vite root, aliases, base path,

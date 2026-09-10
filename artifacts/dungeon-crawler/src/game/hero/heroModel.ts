@@ -857,6 +857,234 @@ function buildSword(tier: number, animated: Animated[]): THREE.Group {
   return sword;
 }
 
+
+// ---- Dungeon stage -----------------------------------------------------------------------
+
+/** Wet cobblestones: dark rounded slabs with pale mortar. */
+function cobbleTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const c = document.createElement('canvas');
+  c.width = size;
+  c.height = size;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#17161c';
+  g.fillRect(0, 0, size, size);
+  let seed = 7;
+  const rnd = () => {
+    seed = (seed * 16807) % 2147483647;
+    return seed / 2147483647;
+  };
+  const cell = 32;
+  for (let y = 0; y < size; y += cell) {
+    for (let x = 0; x < size; x += cell) {
+      const w = cell - 4 - rnd() * 6;
+      const h = cell - 4 - rnd() * 6;
+      const ox = x + 2 + rnd() * 3;
+      const oy = y + 2 + rnd() * 3;
+      const shade = 34 + rnd() * 22;
+      g.fillStyle = `rgb(${shade + 2},${shade},${shade + 8})`;
+      g.beginPath();
+      g.roundRect(ox, oy, w, h, 6);
+      g.fill();
+      g.fillStyle = `rgba(255,255,255,${0.04 + rnd() * 0.05})`;
+      g.beginPath();
+      g.roundRect(ox + 2, oy + 2, w - 4, h * 0.35, 5);
+      g.fill();
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(5, 5);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  textures.push(tex);
+  return tex;
+}
+
+/** Rough stone bricks with staggered courses. */
+function brickTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const c = document.createElement('canvas');
+  c.width = size;
+  c.height = size;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#0f0e14';
+  g.fillRect(0, 0, size, size);
+  let seed = 3;
+  const rnd = () => {
+    seed = (seed * 48271) % 2147483647;
+    return seed / 2147483647;
+  };
+  const bw = 64;
+  const bh = 32;
+  for (let row = 0; row < size / bh; row++) {
+    const offset = row % 2 ? bw / 2 : 0;
+    for (let x = -bw; x < size + bw; x += bw) {
+      const shade = 30 + rnd() * 18;
+      g.fillStyle = `rgb(${shade},${shade - 2},${shade + 6})`;
+      g.beginPath();
+      g.roundRect(x + offset + 2, row * bh + 2, bw - 4, bh - 4, 3);
+      g.fill();
+      g.fillStyle = `rgba(0,0,0,${0.15 + rnd() * 0.2})`;
+      g.fillRect(x + offset + 2, row * bh + bh - 8, bw - 4, 4);
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(3, 2);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  textures.push(tex);
+  return tex;
+}
+
+interface Stage {
+  group: THREE.Group;
+  animated: Animated[];
+  dispose(): void;
+}
+
+/**
+ * A torchlit stone corridor behind the hero: wet cobbles, brick walls, an
+ * arch fading into the dark, two flickering torches and drifting dust.
+ */
+function buildDungeon(): Stage {
+  const group = new THREE.Group();
+  const animated: Animated[] = [];
+  const own: THREE.BufferGeometry[] = [];
+  const mats: THREE.Material[] = [];
+  const g = <T extends THREE.BufferGeometry>(x: T) => {
+    own.push(x);
+    return x;
+  };
+  const m = <T extends THREE.Material>(x: T) => {
+    mats.push(x);
+    return x;
+  };
+
+  // Floor: cobbles with a wet clearcoat.
+  const floor = new THREE.Mesh(
+    g(new THREE.PlaneGeometry(14, 14)),
+    m(new THREE.MeshPhysicalMaterial({ map: cobbleTexture(), color: 0xb9b6c4, roughness: 0.55, metalness: 0.05, clearcoat: 0.7, clearcoatRoughness: 0.35 })),
+  );
+  floor.rotation.x = -Math.PI / 2;
+  floor.receiveShadow = true;
+  group.add(floor);
+
+  // Walls: a back wall with an arched opening, and two angled side walls.
+  const brick = m(new THREE.MeshPhysicalMaterial({ map: brickTexture(), color: 0xb5b0c0, roughness: 0.9, metalness: 0 }));
+  const back = new THREE.Mesh(g(new THREE.BoxGeometry(12, 6, 0.6)), brick);
+  back.position.set(0, 3, -3.6);
+  back.receiveShadow = true;
+  group.add(back);
+  for (const side of [-1, 1]) {
+    const wall = new THREE.Mesh(g(new THREE.BoxGeometry(0.6, 6, 8)), brick);
+    wall.position.set(side * 3.4, 3, -0.2);
+    wall.rotation.y = side * 0.12;
+    wall.receiveShadow = true;
+    group.add(wall);
+  }
+  // The arch: a dark passage with a stone ring and pillars.
+  const dark = m(new THREE.MeshBasicMaterial({ color: 0x030308 }));
+  const passage = new THREE.Mesh(g(new THREE.PlaneGeometry(2.4, 3.2)), dark);
+  passage.position.set(0, 1.6, -3.29);
+  group.add(passage);
+  const passageTop = new THREE.Mesh(g(new THREE.CircleGeometry(1.2, 32, 0, Math.PI)), dark);
+  passageTop.position.set(0, 3.2, -3.29);
+  group.add(passageTop);
+  const stone = m(new THREE.MeshPhysicalMaterial({ map: brickTexture(), color: 0x8d8894, roughness: 0.9 }));
+  const arch = new THREE.Mesh(g(new THREE.TorusGeometry(1.32, 0.14, 12, 40, Math.PI)), stone);
+  arch.position.set(0, 3.2, -3.25);
+  group.add(arch);
+  for (const side of [-1, 1]) {
+    const pillar = new THREE.Mesh(g(new THREE.CylinderGeometry(0.15, 0.18, 3.3, 20)), stone);
+    pillar.position.set(side * 1.32, 1.6, -3.25);
+    group.add(pillar);
+    const cap = new THREE.Mesh(g(new THREE.BoxGeometry(0.5, 0.16, 0.5)), stone);
+    cap.position.set(side * 1.32, 3.2, -3.25);
+    group.add(cap);
+  }
+
+  // Torches on the side walls.
+  const flameMat = m(new THREE.MeshBasicMaterial({ color: 0xffb347, transparent: true, opacity: 0.95 }));
+  const emberMat = m(new THREE.MeshBasicMaterial({ color: 0xff5a1f }));
+  const wood = m(new THREE.MeshPhysicalMaterial({ color: 0x3b2a1a, roughness: 0.9 }));
+  const iron = m(new THREE.MeshPhysicalMaterial({ color: 0x2a2a30, roughness: 0.5, metalness: 0.8 }));
+  const torches: Array<{ light: THREE.PointLight; flame: THREE.Mesh; core: THREE.Mesh; phase: number }> = [];
+  for (const side of [-1, 1]) {
+    const x = side * 1.62;
+    const z = -3.05;
+    const bracket = new THREE.Mesh(g(new THREE.TorusGeometry(0.09, 0.02, 8, 20)), iron);
+    bracket.position.set(x, 2.05, z);
+    bracket.rotation.x = Math.PI / 2;
+    group.add(bracket);
+    const stick = new THREE.Mesh(g(new THREE.CylinderGeometry(0.035, 0.045, 0.5, 10)), wood);
+    stick.position.set(x, 2.1, z + 0.05);
+    stick.rotation.x = 0.3;
+    group.add(stick);
+    const flame = new THREE.Mesh(g(new THREE.ConeGeometry(0.1, 0.34, 12)), flameMat);
+    flame.position.set(x, 2.5, z + 0.12);
+    group.add(flame);
+    const core = new THREE.Mesh(g(new THREE.SphereGeometry(0.065, 12, 8)), emberMat);
+    core.position.set(x, 2.38, z + 0.12);
+    group.add(core);
+    const light = new THREE.PointLight(0xff8c3a, 9, 10, 2);
+    light.position.set(x, 2.5, z + 0.5);
+    group.add(light);
+    torches.push({ light, flame, core, phase: side * 1.7 });
+  }
+  animated.push({
+    update: (t) => {
+      for (const torch of torches) {
+        const f = 0.85 + Math.sin(t * 11 + torch.phase) * 0.08 + Math.sin(t * 23 + torch.phase * 2) * 0.05;
+        torch.light.intensity = 9 * f;
+        torch.flame.scale.set(1 + (f - 0.85) * 2, 0.9 + (f - 0.85) * 3, 1);
+        torch.flame.rotation.z = Math.sin(t * 9 + torch.phase) * 0.12;
+        torch.core.scale.setScalar(0.9 + (f - 0.85) * 2);
+      }
+    },
+  });
+
+  // Drifting dust motes.
+  const count = 160;
+  const positions = new Float32Array(count * 3);
+  const speeds = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    positions[i * 3] = (Math.random() - 0.5) * 6;
+    positions[i * 3 + 1] = Math.random() * 3.5;
+    positions[i * 3 + 2] = -3 + Math.random() * 5;
+    speeds[i] = 0.05 + Math.random() * 0.1;
+  }
+  const dustGeo = g(new THREE.BufferGeometry());
+  dustGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const dust = new THREE.Points(
+    dustGeo,
+    m(new THREE.PointsMaterial({ color: 0xffd9a0, size: 0.035, transparent: true, opacity: 0.55, sizeAttenuation: true, depthWrite: false })),
+  );
+  group.add(dust);
+  animated.push({
+    update: (t) => {
+      const p = dustGeo.attributes.position as THREE.BufferAttribute;
+      for (let i = 0; i < count; i++) {
+        let y = p.getY(i) + speeds[i] * 0.016;
+        if (y > 3.6) y = 0;
+        p.setY(i, y);
+        p.setX(i, p.getX(i) + Math.sin(t * 0.5 + i) * 0.0008);
+      }
+      p.needsUpdate = true;
+    },
+  });
+
+  return {
+    group,
+    animated,
+    dispose() {
+      for (const x of own) x.dispose();
+      for (const x of mats) x.dispose();
+    },
+  };
+}
+
 // ---- Viewer ------------------------------------------------------------------------------
 
 export interface HeroViewer {
@@ -877,7 +1105,7 @@ export function describeGear(run: RunState) {
 export function createHeroViewer(container: HTMLElement, run: RunState): HeroViewer {
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'low-power' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setClearColor(0x000000, 0);
+  renderer.setClearColor(0x07070c, 1);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.05;
   renderer.shadowMap.enabled = true;
@@ -892,19 +1120,19 @@ export function createHeroViewer(container: HTMLElement, run: RunState): HeroVie
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
-  camera.position.set(0, 1.5, 5.3);
-  camera.lookAt(0, 1.15, 0);
+  camera.position.set(0, 1.55, 6.3);
+  camera.lookAt(0, 1.3, 0);
 
   // Image-based lighting gives the metals something to reflect.
   const pmrem = new THREE.PMREMGenerator(renderer);
   const envScene = new RoomEnvironment();
   const env = pmrem.fromScene(envScene, 0.04);
   scene.environment = env.texture;
-  scene.environmentIntensity = 0.55;
+  scene.environmentIntensity = 0.4;
   pmrem.dispose();
 
-  scene.add(new THREE.HemisphereLight(0x8fd3ff, 0x1a1024, 0.5));
-  const key = new THREE.DirectionalLight(0xfff1d6, 2.4);
+  scene.add(new THREE.HemisphereLight(0x6f8fb8, 0x14101c, 0.5));
+  const key = new THREE.DirectionalLight(0xffe0b8, 2.0);
   key.position.set(2.5, 4.5, 3);
   key.castShadow = true;
   key.shadow.mapSize.set(1024, 1024);
@@ -924,20 +1152,11 @@ export function createHeroViewer(container: HTMLElement, run: RunState): HeroVie
   fill.position.set(-2, 1, 3);
   scene.add(fill);
 
-  // A stone pedestal that catches the hero's shadow.
-  const pedestalGeo = new THREE.CylinderGeometry(0.95, 1.08, 0.1, 48);
-  const pedestalMat = new THREE.MeshPhysicalMaterial({ color: 0x23232f, roughness: 0.85, metalness: 0.05 });
-  const pedestal = new THREE.Mesh(pedestalGeo, pedestalMat);
-  pedestal.position.y = -0.05;
-  pedestal.receiveShadow = true;
-  const rimGeo = new THREE.TorusGeometry(0.98, 0.02, 10, 64);
-  const rimMat = new THREE.MeshPhysicalMaterial({ color: 0x3b3b52, roughness: 0.5, metalness: 0.4 });
-  const pedestalRim = new THREE.Mesh(rimGeo, rimMat);
-  pedestalRim.rotation.x = Math.PI / 2;
-  pedestalRim.position.y = 0;
-  const stage = new THREE.Group();
-  stage.add(pedestal, pedestalRim);
-  scene.add(stage);
+  // The torchlit corridor the hero stands in.
+  const stage = buildDungeon();
+  scene.add(stage.group);
+  scene.background = new THREE.Color(0x07070c);
+  scene.fog = new THREE.Fog(0x07070c, 7, 15);
 
   let hero: HeroBuild | null = null;
   let signature = '';
@@ -959,7 +1178,7 @@ export function createHeroViewer(container: HTMLElement, run: RunState): HeroVie
   let lastX = 0;
   let lastY = 0;
   let idleSince = 0;
-  let spin = 0;
+  let spin = -0.35;
   let tilt = 0;
   const onDown = (e: PointerEvent) => {
     dragging = true;
@@ -1004,9 +1223,8 @@ export function createHeroViewer(container: HTMLElement, run: RunState): HeroVie
     if (!dragging && now - idleSince > 1500) spin += 0.004;
     rig.rotation.y = spin;
     rig.rotation.x = tilt;
-    stage.rotation.y = spin;
-    stage.rotation.x = tilt;
     if (hero) for (const a of hero.animated) a.update(t);
+    for (const a of stage.animated) a.update(t);
     renderer.render(scene, camera);
   };
   loop();
@@ -1024,10 +1242,7 @@ export function createHeroViewer(container: HTMLElement, run: RunState): HeroVie
       for (const m of materials.splice(0)) m.dispose();
       for (const t of textures.splice(0)) t.dispose();
       env.dispose();
-      pedestalGeo.dispose();
-      pedestalMat.dispose();
-      rimGeo.dispose();
-      rimMat.dispose();
+      stage.dispose();
       renderer.dispose();
       canvas.remove();
     },
