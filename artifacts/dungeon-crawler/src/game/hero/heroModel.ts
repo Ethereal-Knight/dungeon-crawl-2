@@ -4,10 +4,8 @@ import type { RunState } from '../events';
 import { armorAt, weaponAt, ARMORS, WEAPONS } from '../shop';
 
 /**
- * A 3D Wren for the pause menu, modelled from smooth primitives (capsules,
- * spheres, lathes and bevelled blade profiles) with physically based
- * materials, an environment map and cast shadows, so it needs no asset files
- * yet reads as a figure rather than a pile of cubes.
+ * An asset-free portrait of Wren: sculpted anatomy, tailored clothing and
+ * deterministic micro-surface maps, lit with a warm portrait key.
  *
  * Everything the merchant sells shows up on the model:
  *
@@ -25,27 +23,25 @@ import { armorAt, weaponAt, ARMORS, WEAPONS } from '../shop';
  * the gameplay bundle.
  */
 
-// ---- Palette (matches the sprite sheet) -----------------------------------
+// ---- Weathered, natural counterparts of the sprite palette ----------------
 
 const C = {
-  hood: 0x2f9e8f,
-  hoodDark: 0x1f6f66,
-  hoodLight: 0x63cdbb,
-  faceShadow: 0x1a1430,
-  eye: 0x9ff8ff,
-  skin: 0xe9b58c,
-  scarf: 0xc83a3a,
-  scarfDark: 0x8d2323,
-  tunic: 0x6d4a2d,
-  tunicDark: 0x4a3220,
+  hood: 0x405c53,
+  hoodDark: 0x253b34,
+  hoodLight: 0x6b7964,
+  skin: 0xc3987c,
+  scarf: 0x773d36,
+  scarfDark: 0x522d29,
+  tunic: 0x665b48,
+  tunicDark: 0x474336,
   belt: 0x33200f,
-  buckle: 0xe8bb4c,
-  pauldron: 0xb87333,
-  pauldronLight: 0xe3a463,
+  buckle: 0xab9160,
+  pauldron: 0x8f7150,
+  pauldronLight: 0xb09c77,
   gauntlet: 0x4b5a75,
   gauntletLight: 0x7a8db0,
   rune: 0x67e8f9,
-  trousers: 0x3a3e52,
+  trousers: 0x383d3c,
   boot: 0x4b2f1e,
   bootDark: 0x2c1a0f,
   grip: 0x5a3a22,
@@ -57,9 +53,9 @@ const C = {
   plateDark: 0x7f8794,
   mithril: 0xe8eef8,
   mithrilGlow: 0x8fb8ff,
-  heart: 0xff3b5c,
-  clover: 0x4ade80,
-  amber: 0xfbbf24,
+  heart: 0x983e43,
+  clover: 0x5b8c69,
+  amber: 0xba8a39,
   ember: 0xff6a00,
   fang: 0xd9a86a,
   rust: 0x8f8470,
@@ -74,6 +70,82 @@ type Mat = THREE.MeshPhysicalMaterial;
 const materials: THREE.Material[] = [];
 const geometries: THREE.BufferGeometry[] = [];
 const textures: THREE.Texture[] = [];
+type Surface = 'cloth' | 'leather' | 'skin' | 'metal';
+type SurfaceMaps = { map: THREE.CanvasTexture; bumpMap: THREE.CanvasTexture; roughnessMap: THREE.CanvasTexture };
+const surfaceMaps = new Map<Surface, SurfaceMaps>();
+
+/** Shared per build, never fetched. Albedo is sRGB; height/roughness remain linear. */
+function surface(kind: Surface): SurfaceMaps {
+  const cached = surfaceMaps.get(kind);
+  if (cached) return cached;
+  const size = 256;
+  const canvases = Array.from({ length: 3 }, () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    return canvas;
+  });
+  const contexts = canvases.map(c => c.getContext('2d')!);
+  const images = contexts.map(c => c.createImageData(size, size));
+  let seed = 1129;
+  const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const noise = random();
+      const grain = Math.sin(x * 0.23 + Math.sin(y * 0.17)) * Math.sin(y * 0.19);
+      const warp = Math.sin(x * Math.PI / 2);
+      const weft = Math.sin(y * Math.PI / 2);
+      const weave = ((Math.floor(x / 4) + Math.floor(y / 4)) % 2 ? warp : weft);
+      const height = kind === 'cloth' ? 125 + weave * 32 + noise * 18
+        : kind === 'skin' ? 135 + noise * 24 - (noise < 0.075 ? 40 : 0)
+        : kind === 'leather' ? 135 + grain * 25 + noise * 30
+        : 155 + noise * 15 + Math.sin(x * 2 + y * 0.04) * 7;
+      const albedo = kind === 'cloth' ? 219 + weave * 9 + noise * 14
+        : kind === 'skin' ? 232 + grain * 7 + noise * 9
+        : kind === 'leather' ? 208 + grain * 13 + noise * 18 : 226 + noise * 18;
+      const values = [albedo, height, kind === 'metal' ? 160 + noise * 50 : 207 + noise * 36];
+      for (let layer = 0; layer < 3; layer++) {
+        const i = (y * size + x) * 4;
+        images[layer].data[i] = values[layer];
+        images[layer].data[i + 1] = values[layer] - (kind === 'skin' && layer === 0 ? 5 : 0);
+        images[layer].data[i + 2] = values[layer] - (kind === 'skin' && layer === 0 ? 9 : 0);
+        images[layer].data[i + 3] = 255;
+      }
+    }
+  }
+  contexts.forEach((context, i) => context.putImageData(images[i], 0, 0));
+  if (kind === 'metal' || kind === 'leather') {
+    for (let i = 0; i < 95; i++) {
+      const x = random() * size;
+      const y = random() * size;
+      const length = 2 + random() * 24;
+      contexts.forEach((context, layer) => {
+        context.strokeStyle = layer === 0 ? 'rgba(240,234,218,.16)' : 'rgba(35,35,35,.23)';
+        context.lineWidth = 0.5;
+        context.beginPath();
+        context.moveTo(x, y);
+        context.lineTo(x + length * 0.2, y + length);
+        context.stroke();
+      });
+    }
+  }
+  const maps = canvases.map((canvas, i) => {
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(kind === 'skin' ? 2 : 4, kind === 'skin' ? 2 : 4);
+    if (i === 0) texture.colorSpace = THREE.SRGBColorSpace;
+    texture.anisotropy = 4;
+    textures.push(texture);
+    return texture;
+  });
+  const result = { map: maps[0], bumpMap: maps[1], roughnessMap: maps[2] };
+  surfaceMaps.set(kind, result);
+  return result;
+}
+
+/** Continuous, bounded enhancement even after the visible accessory count caps. */
+function mastery(level: number, pace = 8): number {
+  return Math.max(0, level) / (Math.max(0, level) + pace);
+}
 
 function track<T extends THREE.BufferGeometry>(g: T): T {
   geometries.push(g);
@@ -84,9 +156,11 @@ function track<T extends THREE.BufferGeometry>(g: T): T {
 function cloth(color: number, opts: Partial<THREE.MeshPhysicalMaterialParameters> = {}): Mat {
   const m = new THREE.MeshPhysicalMaterial({
     color,
+    ...surface('cloth'),
+    bumpScale: 0.003,
     roughness: 0.82,
     metalness: 0,
-    sheen: 0.6,
+    sheen: 0.22,
     sheenRoughness: 0.8,
     sheenColor: new THREE.Color(color).lerp(new THREE.Color(0xffffff), 0.3),
     ...opts,
@@ -95,8 +169,12 @@ function cloth(color: number, opts: Partial<THREE.MeshPhysicalMaterialParameters
   return m;
 }
 
+function leather(color: number): Mat {
+  return cloth(color, { ...surface('leather'), bumpScale: 0.005, roughness: 0.72, sheen: 0.08 });
+}
+
 function metal(color: number, roughness = 0.32, opts: Partial<THREE.MeshPhysicalMaterialParameters> = {}): Mat {
-  const m = new THREE.MeshPhysicalMaterial({ color, roughness, metalness: 0.9, clearcoat: 0.25, clearcoatRoughness: 0.3, ...opts });
+  const m = new THREE.MeshPhysicalMaterial({ color, ...surface('metal'), bumpScale: 0.0012, roughness, metalness: 0.9, clearcoat: 0.08, clearcoatRoughness: 0.45, ...opts });
   materials.push(m);
   return m;
 }
@@ -243,6 +321,7 @@ interface Animated {
 interface HeroBuild {
   group: THREE.Group;
   animated: Animated[];
+  dispose(): void;
 }
 
 /**
@@ -268,14 +347,147 @@ const TORSO: Array<[number, number]> = [
   [0.0, 1.63],
 ];
 
+/** Dense, smoothly interpolated profiles avoid both faceted cones and pill limbs. */
+function tailoredProfile(points: Array<[number, number]>, mat: Mat, folds = 0): THREE.Mesh {
+  const curve = new THREE.SplineCurve(points.map(([r, y]) => new THREE.Vector2(r, y)));
+  const profile = curve.getPoints(points.length * 6).map(p => [Math.max(0, p.x), p.y] as [number, number]);
+  const result = lathe(profile, mat, 0, Math.PI * 2, 64);
+  if (folds) {
+    const position = result.geometry.attributes.position as THREE.BufferAttribute;
+    for (let i = 0; i < position.count; i++) {
+      const x = position.getX(i), y = position.getY(i), z = position.getZ(i);
+      const angle = Math.atan2(x, z);
+      const radius = Math.hypot(x, z);
+      const fold = folds * (0.55 * Math.sin(angle * 11 + y * 9) + 0.3 * Math.sin(angle * 19 - y * 17));
+      const ratio = radius > 0.01 ? 1 + fold / radius : 1;
+      position.setXYZ(i, x * ratio, y, z * ratio);
+    }
+    result.geometry.computeVertexNormals();
+  }
+  return result;
+}
+
 function torsoLayer(mat: Mat, scale = 1, from = 0, to = TORSO.length): THREE.Mesh {
   const pts = TORSO.slice(from, to).map(([r, y]) => [r * scale, y] as [number, number]);
-  const m = lathe(pts, mat);
+  const m = tailoredProfile(pts, mat, mat.metalness < 0.5 ? 0.008 : 0);
   m.scale.z = 0.74;
   return m;
 }
 
+function seam(parent: THREE.Group, points: number[][], radius: number, mat: Mat) {
+  const curve = new THREE.CatmullRomCurve3(points.map(p => new THREE.Vector3(p[0], p[1], p[2])));
+  const result = mesh(new THREE.TubeGeometry(curve, 28, radius, 6, false), mat);
+  parent.add(result);
+  return result;
+}
+
+function ellipsoid(parent: THREE.Group, mat: Mat, position: number[], scale: number[]): THREE.Mesh {
+  const result = sphere(1, mat, ...position as [number, number, number]);
+  result.scale.set(...scale as [number, number, number]);
+  parent.add(result);
+  return result;
+}
+
+/** A continuous facial surface, with jaw/cheek planes and sculpted orbital sockets. */
+function sculptHead(parent: THREE.Group, skin: Mat) {
+  const head = new THREE.Group();
+  head.position.set(0, 1.875, 0.015);
+  parent.add(head);
+  const profile = new THREE.SplineCurve([
+    new THREE.Vector2(0, -0.175), new THREE.Vector2(0.056, -0.157),
+    new THREE.Vector2(0.095, -0.12), new THREE.Vector2(0.112, -0.073),
+    new THREE.Vector2(0.123, -0.015), new THREE.Vector2(0.12, 0.07),
+    new THREE.Vector2(0.099, 0.135), new THREE.Vector2(0.053, 0.169),
+    new THREE.Vector2(0, 0.18),
+  ]);
+  const points = profile.getPoints(88);
+  const geometry = new THREE.LatheGeometry(points, 96);
+  const positions = geometry.attributes.position as THREE.BufferAttribute;
+  const gaussian = (x: number, y: number, cx: number, cy: number, sx: number, sy: number) =>
+    Math.exp(-(((x - cx) / sx) ** 2 + ((y - cy) / sy) ** 2));
+  for (let i = 0; i < positions.count; i++) {
+    const x = positions.getX(i), y = positions.getY(i), z = positions.getZ(i);
+    const radius = Math.hypot(x, z);
+    const front = radius > 0 ? Math.max(0, z / radius) : 0;
+    let depth = z * 0.94;
+    if (front > 0) {
+      depth = radius * Math.pow(front, 0.43) * 0.91;
+      depth += 0.032 * gaussian(x, y, 0, -0.013, 0.017, 0.065);
+      depth += 0.043 * gaussian(x, y, 0, -0.045, 0.023, 0.022);
+      depth += 0.011 * gaussian(x, y, 0, -0.10, 0.045, 0.018);
+      depth += 0.017 * gaussian(x, y, 0, -0.142, 0.05, 0.024);
+      for (const side of [-1, 1]) {
+        depth -= 0.020 * gaussian(x, y, side * 0.047, 0.017, 0.030, 0.020);
+        depth += 0.012 * gaussian(x, y, side * 0.059, 0.047, 0.036, 0.013);
+        depth += 0.013 * gaussian(x, y, side * 0.076, -0.034, 0.033, 0.025);
+      }
+    }
+    positions.setXYZ(i, x, y, depth);
+  }
+  geometry.computeVertexNormals();
+  head.add(mesh(geometry, skin));
+
+  const lip = cloth(0x9b6960, { ...surface('skin'), sheen: 0, roughness: 0.62, bumpScale: 0.0006 });
+  const crease = cloth(0x5c3d32, { sheen: 0, bumpScale: 0 });
+  const brow = leather(0x453b31);
+  const white = cloth(0xd2cec0, { map: null, bumpMap: null, roughnessMap: null, roughness: 0.27, sheen: 0, clearcoat: 0.4 });
+  const iris = metal(0x657266, 0.48, { metalness: 0, bumpScale: 0.0003 });
+  const pupil = cloth(0x151914, { map: null, bumpMap: null, sheen: 0, roughness: 0.18 });
+  for (const side of [-1, 1]) {
+    const x = side * 0.047;
+    ellipsoid(head, white, [x, 0.016, 0.098], [0.024, 0.011, 0.011]);
+    ellipsoid(head, iris, [x - side * 0.001, 0.016, 0.108], [0.009, 0.009, 0.0028]);
+    ellipsoid(head, pupil, [x - side * 0.001, 0.016, 0.110], [0.0038, 0.0045, 0.0015]);
+    seam(head, [[x - 0.025, 0.015, 0.098], [x, 0.028, 0.104], [x + 0.025, 0.015, 0.098]], 0.003, skin);
+    seam(head, [[x - 0.024, 0.014, 0.097], [x, 0.006, 0.103], [x + 0.024, 0.014, 0.097]], 0.0024, lip);
+    seam(head, [[x - 0.027, 0.043, 0.105], [x, 0.051, 0.117], [x + 0.027, 0.045, 0.105]], 0.004, brow);
+    for (let hair = 0; hair < 9; hair++) {
+      const hx = x - 0.022 + hair * 0.0055;
+      seam(head, [[hx, 0.045, 0.116], [hx + side * 0.004, 0.053, 0.115]], 0.0007, brow);
+    }
+    ellipsoid(head, skin, [side * 0.119, -0.032, -0.003], [0.016, 0.036, 0.020]);
+    ellipsoid(head, lip, [side * 0.129, -0.03, 0.010], [0.006, 0.021, 0.008]);
+    ellipsoid(head, skin, [side * 0.014, -0.047, 0.149], [0.011, 0.009, 0.011]);
+    ellipsoid(head, crease, [side * 0.012, -0.053, 0.154], [0.004, 0.0025, 0.003]);
+  }
+  seam(head, [[-0.033, -0.092, 0.117], [-0.012, -0.087, 0.126], [0, -0.090, 0.127], [0.012, -0.087, 0.126], [0.033, -0.092, 0.117]], 0.0036, lip);
+  seam(head, [[-0.030, -0.095, 0.118], [0, -0.102, 0.127], [0.030, -0.095, 0.118]], 0.004, lip);
+  seam(head, [[-0.033, -0.094, 0.119], [0, -0.094, 0.129], [0.033, -0.094, 0.119]], 0.0012, crease);
+  // A few swept locks break up the hood edge without concealing the face.
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < 7; i++) {
+      seam(head, [[side * (0.026 + i * 0.012), 0.145 - i * 0.002, 0.048],
+        [side * (0.08 + i * 0.006), 0.11 - i * 0.003, 0.085],
+        [side * (0.108 + i * 0.001), 0.03 - i * 0.008, 0.041]], 0.0045, brow);
+    }
+  }
+}
+
+function hand(parent: THREE.Group, side: number, skin: Mat) {
+  const x = side * 0.45;
+  ellipsoid(parent, skin, [x, 0.755, 0.04], [0.046, 0.066, 0.026]);
+  const nail = cloth(0xbfa18b, { ...surface('skin'), roughness: 0.4, sheen: 0, bumpScale: 0.0004 });
+  for (let finger = 0; finger < 4; finger++) {
+    if (side > 0) {
+      const y = 0.787 - finger * 0.023;
+      seam(parent, [[x + 0.028, y, 0.044], [x + 0.025, y - 0.007, 0.099],
+        [x - 0.011, y - 0.008, 0.11], [x - 0.030, y - 0.004, 0.081]], 0.011, skin);
+      ellipsoid(parent, nail, [x - 0.024, y - 0.003, 0.10], [0.007, 0.008, 0.002]);
+    } else {
+      const fx = x - 0.031 + finger * 0.020;
+      const length = finger === 0 || finger === 3 ? 0.067 : 0.088;
+      seam(parent, [[fx, 0.719, 0.042], [fx - 0.006, 0.69, 0.059],
+        [fx - 0.005, 0.715 - length, 0.078]], 0.009, skin);
+      ellipsoid(parent, nail, [fx - 0.005, 0.722 - length, 0.086], [0.006, 0.010, 0.002]);
+    }
+  }
+  seam(parent, [[x - side * 0.032, 0.784, 0.042], [x - side * 0.062, 0.752, 0.065],
+    [x - side * 0.037, 0.720, 0.083]], 0.013, skin);
+}
+
 function buildHero(run: RunState): HeroBuild {
+  surfaceMaps.clear();
+  const resourceStart = [geometries.length, materials.length, textures.length];
   const group = new THREE.Group();
   const animated: Animated[] = [];
   const body = new THREE.Group();
@@ -287,19 +499,29 @@ function buildHero(run: RunState): HeroBuild {
 
   // ---- Legs and boots --------------------------------------------------------
   const trousers = cloth(C.trousers);
-  const bootMat = cloth(C.boot, { roughness: 0.55, sheen: 0.2 });
-  const bootDark = cloth(C.bootDark, { roughness: 0.6, sheen: 0 });
+  const bootMat = leather(C.boot);
+  const bootDark = leather(C.bootDark);
   for (const side of [-1, 1]) {
-    body.add(capsule(0.105, 0.42, trousers, side * 0.15, 0.56, 0));
-    body.add(cylinder(0.115, 0.125, 0.24, bootMat, side * 0.15, 0.26, 0.0));
-    const foot = capsule(0.1, 0.16, bootMat, side * 0.15, 0.1, 0.08);
-    foot.rotation.x = Math.PI / 2;
-    body.add(foot);
-    const sole = cylinder(0.11, 0.11, 0.04, bootDark, side * 0.15, 0.02, 0.06);
-    sole.scale.z = 1.6;
+    const leg = tailoredProfile([[0.070, -0.04], [0.086, 0.14], [0.071, 0.30],
+      [0.084, 0.41], [0.12, 0.67], [0.125, 0.84]], trousers, 0.006);
+    leg.position.x = side * 0.15;
+    leg.scale.z = 0.92;
+    body.add(leg);
+    const boot = tailoredProfile([[0.078, -0.24], [0.073, -0.15], [0.079, -0.06],
+      [0.087, 0.10], [0.082, 0.19]], bootMat, 0.003);
+    boot.position.x = side * 0.15;
+    body.add(boot);
+    ellipsoid(body, bootMat, [side * 0.15, -0.245, 0.06], [0.087, 0.062, 0.165]);
+    const sole = cylinder(0.092, 0.094, 0.027, bootDark, side * 0.15, -0.299, 0.063);
+    sole.scale.z = 1.75;
     body.add(sole);
+    body.add(ring(0.084, 0.01, bootDark, side * 0.15, 0.18, 0));
+    for (let stitch = 0; stitch < 7; stitch++) {
+      const y = -0.08 + stitch * 0.031;
+      seam(body, [[side * 0.15 - 0.026, y, 0.077], [side * 0.15 + 0.026, y + 0.014, 0.08]], 0.0025, bootDark);
+    }
     if (armorTier >= 3) {
-      const knee = sphere(0.09, armorTier >= 4 ? metal(C.mithril, 0.25) : metal(C.plate), side * 0.15, 0.6, 0.08);
+      const knee = sphere(0.09, armorTier >= 4 ? metal(C.mithril, 0.25) : metal(C.plate), side * 0.15, 0.32, 0.067);
       knee.scale.set(1.1, 1, 0.8);
       body.add(knee);
     }
@@ -308,40 +530,52 @@ function buildHero(run: RunState): HeroBuild {
   // ---- Torso, belt and buckle ----------------------------------------------------
   const tunic = cloth(C.tunic);
   body.add(torsoLayer(tunic));
-  const belt = ring(0.29, 0.035, cloth(C.belt, { roughness: 0.5, sheen: 0.1 }), 0, 0.9, 0);
+  const belt = ring(0.29, 0.026, leather(C.belt), 0, 0.9, 0);
   belt.scale.set(1, 0.74, 1);
   body.add(belt);
   body.add(slab(0.11, 0.08, 0.03, metal(C.buckle, 0.28), 0, 0.9, 0.235, 0.008));
+  const stitching = cloth(0x9b8b6e);
+  for (const side of [-1, 1]) {
+    seam(body, [[side * 0.15, 1.55, 0.16], [side * 0.23, 1.35, 0.16],
+      [side * 0.20, 1.08, 0.17], [side * 0.19, 0.93, 0.17]], 0.002, stitching);
+  }
+  for (let i = 0; i < 7; i++) {
+    body.add(sphere(0.006, metal(C.buckle, 0.5), 0, 1.08 + i * 0.06, 0.232, 12));
+  }
 
   // ---- Arms: +x is the sword arm, -x the casting hand ---------------------------
-  const skin = cloth(C.skin, { roughness: 0.6, sheen: 0.15 });
+  const skin = cloth(C.skin, { ...surface('skin'), bumpScale: 0.0012, roughness: 0.65, sheen: 0, clearcoat: 0.04, clearcoatRoughness: 0.7 });
   const sleeve = cloth(C.tunicDark);
   for (const side of [-1, 1]) {
-    body.add(sphere(0.1, tunic, side * 0.37, 1.5, 0));
-    const upper = capsule(0.078, 0.26, tunic, side * 0.41, 1.3, 0);
+    ellipsoid(body, tunic, [side * 0.34, 1.48, 0], [0.12, 0.10, 0.10]);
+    const upper = tailoredProfile([[0.061, -0.17], [0.075, -0.08], [0.094, 0.06],
+      [0.09, 0.16], [0.064, 0.20]], tunic, 0.004);
+    upper.position.set(side * 0.405, 1.3, 0);
     upper.rotation.z = side * 0.1;
     body.add(upper);
-    const fore = capsule(0.068, 0.24, sleeve, side * 0.44, 0.98, 0.02);
+    const fore = tailoredProfile([[0.046, -0.17], [0.057, -0.08], [0.077, 0.08],
+      [0.068, 0.17]], sleeve, 0.004);
+    fore.position.set(side * 0.44, 0.98, 0.02);
     fore.rotation.z = side * 0.05;
     body.add(fore);
-    body.add(sphere(0.075, skin, side * 0.45, 0.77, 0.03));
+    hand(body, side, skin);
   }
 
   // Rune gauntlet on the casting hand; its rune burns brighter with Focus.
-  const focusGlow = 0.8 + Math.min(u.focus, 6) * 0.35;
-  const gauntlet = capsule(0.092, 0.2, metal(C.gauntlet, 0.35), -0.445, 0.86, 0.02);
+  const focusGlow = 0.25 + mastery(u.focus) * 1.1;
+  const gauntlet = cylinder(0.087, 0.057, 0.20, metal(C.gauntlet, 0.45), -0.445, 0.91, 0.02);
   body.add(gauntlet);
   body.add(ring(0.096, 0.012, metal(C.gauntletLight, 0.3), -0.445, 0.97, 0.02));
-  body.add(ring(0.096, 0.012, metal(C.gauntletLight, 0.3), -0.445, 0.78, 0.02));
+  body.add(ring(0.060, 0.009, metal(C.gauntletLight, 0.3), -0.445, 0.81, 0.02));
   const runeMat = glow(C.rune, focusGlow);
   body.add(slab(0.04, 0.12, 0.02, runeMat, -0.545, 0.87, 0.02, 0.005));
   body.add(slab(0.03, 0.05, 0.02, runeMat, -0.5, 0.87, 0.105, 0.005));
 
   // Bronze pauldron over the sword shoulder.
-  const pauldron = mesh(new THREE.SphereGeometry(0.17, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), metal(C.pauldron, 0.38), 0.42, 1.52, 0);
+  const pauldron = mesh(new THREE.SphereGeometry(0.135, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), metal(C.pauldron, 0.46), 0.40, 1.50, 0);
   pauldron.scale.set(1, 0.85, 1.1);
   body.add(pauldron);
-  const pauldronRim = ring(0.17, 0.018, metal(C.pauldronLight, 0.3), 0.42, 1.52, 0);
+  const pauldronRim = ring(0.135, 0.009, metal(C.pauldronLight, 0.38), 0.40, 1.50, 0);
   pauldronRim.scale.set(1, 1, 1.1);
   body.add(pauldronRim);
   body.add(slab(0.06, 0.06, 0.02, metal(C.pauldronLight, 0.3), 0.42, 1.6, 0.1, 0.006));
@@ -349,20 +583,12 @@ function buildHero(run: RunState): HeroBuild {
   // ---- Cloak: a half lathe behind the body with a rippled hem --------------------
   const hoodMat = cloth(C.hood, { side: THREE.DoubleSide });
   const hoodDark = cloth(C.hoodDark, { side: THREE.DoubleSide });
-  const cloak = lathe(
-    [
-      [0.3, 1.6],
-      [0.37, 1.5],
-      [0.41, 1.25],
-      [0.46, 0.95],
-      [0.54, 0.62],
-    ],
-    hoodMat,
-    Math.PI / 2,
-    Math.PI,
-    40,
-  );
-  rippleHem(cloak.geometry, 1.1, 0.045);
+  const cloakPoints: Array<[number, number]> = Array.from({ length: 65 }, (_, i) => {
+    const t = i / 64;
+    return [0.26 + 0.29 * Math.pow(t, 0.65), 1.6 - t * 1.45];
+  });
+  const cloak = lathe(cloakPoints, hoodMat, Math.PI / 2, Math.PI, 96);
+  rippleHem(cloak.geometry, 1.62, 0.14);
   cloak.position.z = -0.02;
   const cloakPivot = new THREE.Group();
   cloakPivot.position.y = 1.6;
@@ -370,22 +596,28 @@ function buildHero(run: RunState): HeroBuild {
   cloakPivot.add(cloak);
   body.add(cloakPivot);
   // Lining shows at the hem where the cloak turns.
-  const lining = lathe([[0.44, 0.95], [0.52, 0.62]], hoodDark, Math.PI / 2, Math.PI, 40);
-  rippleHem(lining.geometry, 1.1, 0.045);
+  const lining = lathe(cloakPoints.map(([r, y]) => [r - 0.007, y]), hoodDark, Math.PI / 2, Math.PI, 96);
+  rippleHem(lining.geometry, 1.62, 0.14);
   lining.position.set(0, -1.6, -0.02);
   cloakPivot.add(lining);
   animated.push({
     update: (t) => {
-      cloakPivot.rotation.x = -0.05 + Math.sin(t * 1.3) * 0.025;
+      cloakPivot.rotation.x = -0.035 + Math.sin(t * 1.3) * 0.012;
     },
   });
 
   // ---- Scarf collar and a tail that flutters -------------------------------------
   const scarf = cloth(C.scarf);
   const scarfDark = cloth(C.scarfDark);
-  const collar = ring(0.24, 0.075, scarf, 0, 1.63, 0);
+  const collar = ring(0.135, 0.035, scarf, 0, 1.64, 0);
   collar.scale.set(1, 0.85, 1);
   body.add(collar);
+  for (let i = 0; i < 4; i++) {
+    const fold = ring(0.133 + i * 0.005, 0.006, i % 2 ? scarfDark : scarf, 0, 1.619 + i * 0.012, 0);
+    fold.scale.set(1, 0.85, 1);
+    fold.rotation.z = i * 0.015;
+    body.add(fold);
+  }
   const knot = sphere(0.07, scarfDark, 0.14, 1.6, -0.2);
   body.add(knot);
   const tail = new THREE.Group();
@@ -404,72 +636,57 @@ function buildHero(run: RunState): HeroBuild {
     },
   });
 
-  // ---- Head in the hood's shadow, with glowing eyes ------------------------------
-  body.add(cylinder(0.075, 0.09, 0.1, skin, 0, 1.68, 0.02));
-  const head = sphere(0.22, skin, 0, 1.93, 0.02);
-  head.scale.set(0.95, 1.08, 0.95);
-  body.add(head);
-  // The upper face lies in shadow under the hood; the chin catches the light.
-  const shade = mesh(new THREE.SphereGeometry(0.227, 32, 24, 0, Math.PI * 2, 0, Math.PI * 0.6), cloth(C.faceShadow, { sheen: 0 }), 0, 1.93, 0.02);
-  shade.scale.set(0.95, 1.08, 0.95);
-  body.add(shade);
-  const eyeMat = glow(C.eye, 1.8);
-  for (const side of [-1, 1]) {
-    const eye = sphere(0.028, eyeMat, side * 0.075, 1.955, 0.215, 16);
-    eye.scale.set(1.4, 0.8, 0.6);
-    body.add(eye);
-  }
-  animated.push({
-    update: (t) => {
-      const blink = (t * 0.9) % 4 > 3.85 ? 0.15 : 1;
-      eyeMat.emissiveIntensity = 1.8 * blink;
-    },
-  });
+  // ---- Adult face: a shaped jaw, cheekbones, sockets, nose and natural eyes ------
+  body.add(cylinder(0.061, 0.083, 0.13, skin, 0, 1.688, 0.005));
+  sculptHead(body, skin);
 
   // ---- Hood: a sphere open at the front, with a lining and a peak -----------------
-  const opening = 0.62;
+  const opening = 0.86;
   const hood = mesh(
-    new THREE.SphereGeometry(0.31, 40, 28, Math.PI / 2 + opening, Math.PI * 2 - opening * 2, 0, Math.PI * 0.78),
+    new THREE.SphereGeometry(0.185, 64, 40, Math.PI / 2 + opening, Math.PI * 2 - opening * 2, 0, Math.PI * 0.83),
     hoodMat,
     0,
-    1.95,
+    1.88,
     -0.02,
   );
-  hood.scale.set(1, 1.12, 1.04);
+  rippleHem(hood.geometry, 0.24, 0.08);
+  hood.scale.set(1, 1.23, 0.98);
   body.add(hood);
   const hoodLining = mesh(
-    new THREE.SphereGeometry(0.295, 40, 28, Math.PI / 2 + opening, Math.PI * 2 - opening * 2, 0, Math.PI * 0.78),
+    new THREE.SphereGeometry(0.179, 64, 40, Math.PI / 2 + opening, Math.PI * 2 - opening * 2, 0, Math.PI * 0.83),
     hoodDark,
     0,
-    1.95,
+    1.88,
     -0.02,
   );
-  hoodLining.scale.set(1, 1.12, 1.04);
+  rippleHem(hoodLining.geometry, 0.24, 0.08);
+  hoodLining.scale.set(1, 1.23, 0.98);
   body.add(hoodLining);
   // Rolled brim framing the face: an arc in the vertical plane, open at the chin.
-  const brim = mesh(new THREE.TorusGeometry(0.29, 0.032, 12, 48, Math.PI * 1.25), cloth(C.hoodLight), 0, 1.96, 0.16);
-  brim.rotation.z = -Math.PI * 0.125;
-  brim.scale.set(1.02, 1.12, 1);
-  body.add(brim);
-  // A soft peak folding back off the crown.
-  const peak = cone(0.12, 0.26, hoodMat, 0, 2.27, -0.2, 24);
-  peak.rotation.x = -0.75;
-  body.add(peak);
+  const brimMaterial = cloth(C.hoodLight);
+  seam(body, [[-0.128, 1.716, 0.063], [-0.146, 1.835, 0.111], [-0.125, 1.98, 0.12],
+    [0, 2.093, 0.056], [0.125, 1.98, 0.12], [0.146, 1.835, 0.111], [0.128, 1.716, 0.063]], 0.008, brimMaterial);
+  for (const side of [-1, 1]) {
+    seam(body, [[side * 0.15, 1.76, -0.10], [side * 0.16, 1.90, -0.10],
+      [side * 0.10, 2.05, -0.11], [0, 2.10, -0.06]], 0.002, brimMaterial);
+  }
 
   addArmor(body, armorTier);
   addUpgrades(body, run, animated);
 
   // ---- The sword, held blade-up so it can be admired ----------------------------
   const sword = buildSword(weaponTier, animated);
-  sword.position.set(0.45, 0.77, 0.1);
-  sword.rotation.z = -0.3;
+  sword.position.set(0.48, 0.87, 0.075);
+  sword.rotation.z = -0.18;
   sword.rotation.x = -0.12;
   body.add(sword);
 
-  // Breathing bob for the whole body.
+  // Longer legs and a seven-head adult silhouette; all equipment shares the rig.
+  body.scale.x = 0.88;
+  body.position.y = 0.315;
   animated.push({
     update: (t) => {
-      body.position.y = Math.sin(t * 1.8) * 0.015;
+      body.position.y = 0.315 + Math.sin(t * 1.8) * 0.003;
     },
   });
 
@@ -480,7 +697,18 @@ function buildHero(run: RunState): HeroBuild {
     }
   });
 
-  return { group, animated };
+  const ownedGeometry = geometries.splice(resourceStart[0]);
+  const ownedMaterials = materials.splice(resourceStart[1]);
+  const ownedTextures = textures.splice(resourceStart[2]);
+  surfaceMaps.clear();
+  return {
+    group, animated,
+    dispose() {
+      ownedGeometry.forEach(g => g.dispose());
+      ownedMaterials.forEach(m => m.dispose());
+      ownedTextures.forEach(t => t.dispose());
+    },
+  };
 }
 
 /** Pushes lathe vertices in and out around the hem so cloth does not hang like a tube. */
@@ -493,8 +721,8 @@ function rippleHem(geometry: THREE.BufferGeometry, topY: number, amount: number)
     if (y >= topY) continue;
     const phi = Math.atan2(x, z);
     const strength = (topY - y) / topY;
-    const f = 1 + Math.sin(phi * 7 + 0.4) * amount * strength;
-    pos.setXYZ(i, x * f, y, z * f);
+    const f = 1 + (Math.sin(phi * 9 + y * 1.7) + Math.sin(phi * 17 - y * 2.5) * 0.28) * amount * strength;
+    pos.setXYZ(i, x * f, y + Math.sin(phi * 9) * amount * strength * 0.09, z * f);
   }
   pos.needsUpdate = true;
   geometry.computeVertexNormals();
@@ -507,15 +735,15 @@ function addArmor(body: THREE.Group, tier: number) {
 
   if (tier === 1) {
     // Leather: crossed chest straps and bracers.
-    const leather = cloth(C.leather, { roughness: 0.55, sheen: 0.2 });
+    const leatherMat = leather(C.leather);
     for (const dir of [-1, 1]) {
-      const strap = mesh(new THREE.TorusGeometry(0.31, 0.022, 10, 48, Math.PI * 0.95), leather, 0, 1.22, 0);
+      const strap = mesh(new THREE.TorusGeometry(0.31, 0.022, 10, 48, Math.PI * 0.95), leatherMat, 0, 1.22, 0);
       strap.rotation.set(0, dir * 0.55, Math.PI * 0.05 * -dir);
       strap.scale.set(1, 1.3, 0.76);
       body.add(strap);
     }
     for (const side of [-1, 1]) {
-      body.add(capsule(0.08, 0.16, leather, side * 0.44, 1.0, 0.02));
+      body.add(cylinder(0.079, 0.066, 0.16, leatherMat, side * 0.44, 1.0, 0.02));
       body.add(ring(0.082, 0.01, metal(C.buckle, 0.3), side * 0.44, 1.06, 0.02));
     }
     return;
@@ -523,7 +751,8 @@ function addArmor(body: THREE.Group, tier: number) {
 
   if (tier === 2) {
     // Chainmail: a ringed shirt over the tunic with mail sleeves and a collar.
-    const mail = metal(C.mail, 0.55, { map: mailTexture(), metalness: 0.85 });
+    const mailMap = mailTexture();
+    const mail = metal(C.mail, 0.62, { map: mailMap, bumpMap: mailMap, bumpScale: 0.005, metalness: 0.85 });
     const shirt = torsoLayer(mail, 1.05, 2, 9);
     body.add(shirt);
     for (const side of [-1, 1]) {
@@ -541,7 +770,7 @@ function addArmor(body: THREE.Group, tier: number) {
   const mithril = tier >= 4;
   const enchant = Math.max(0, tier - (ARMORS.length - 1));
   const plateMat = mithril
-    ? metal(C.mithril, 0.22, { emissive: new THREE.Color(C.mithrilGlow), emissiveIntensity: 0.12 + enchant * 0.1 })
+    ? metal(C.mithril, 0.34 - mastery(enchant) * 0.15, { emissive: new THREE.Color(C.mithrilGlow), emissiveIntensity: 0.025 + mastery(enchant) * 0.28 })
     : metal(C.plate, 0.3);
   const trim = mithril ? metal(C.mithril, 0.2) : metal(C.plateDark, 0.35);
 
@@ -561,18 +790,18 @@ function addArmor(body: THREE.Group, tier: number) {
     body.add(capsule(0.08, 0.16, plateMat, side * 0.44, 1.0, 0.02));
   }
   // The casting shoulder gets its own pauldron; the sword shoulder keeps bronze.
-  const p2 = mesh(new THREE.SphereGeometry(0.17, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), plateMat, -0.42, 1.52, 0);
+  const p2 = mesh(new THREE.SphereGeometry(0.135, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), plateMat, -0.40, 1.50, 0);
   p2.scale.set(1, 0.85, 1.1);
   body.add(p2);
-  const rim2 = ring(0.17, 0.018, trim, -0.42, 1.52, 0);
+  const rim2 = ring(0.135, 0.009, trim, -0.40, 1.50, 0);
   rim2.scale.set(1, 1, 1.1);
   body.add(rim2);
   if (mithril) {
     // Brow plate under the hood and rune lines across the chest.
-    const brow = mesh(new THREE.TorusGeometry(0.24, 0.02, 10, 40, Math.PI * 0.8), plateMat, 0, 2.05, 0.05);
+    const brow = mesh(new THREE.TorusGeometry(0.155, 0.009, 10, 40, Math.PI * 0.8), plateMat, 0, 1.996, 0.005);
     brow.rotation.set(Math.PI / 2, 0, Math.PI * 0.6);
     body.add(brow);
-    const rune = glow(C.mithrilGlow, 0.9 + enchant * 0.4);
+    const rune = glow(C.mithrilGlow, 0.32 + mastery(enchant) * 1.0);
     const line = mesh(new THREE.TorusGeometry(0.325, 0.008, 8, 48, Math.PI * 0.7), rune, 0, 1.33, 0);
     line.rotation.set(Math.PI / 2, 0, Math.PI * 0.15);
     line.scale.set(1, 0.76, 1);
@@ -594,20 +823,21 @@ function addUpgrades(body: THREE.Group, run: RunState, animated: Animated[]) {
     body.add(chain);
     const heart = new THREE.Group();
     heart.position.set(0, 1.4, 0.26);
-    const heartMat = glow(C.heart, 0.6 + u.vitality * 0.1, C.heart);
+    const heartMat = metal(C.heart, 0.3, { metalness: 0.2, clearcoat: 0.65,
+      emissive: C.heart, emissiveIntensity: 0.15 + mastery(u.vitality) * 0.65 });
     heart.add(sphere(0.045, heartMat, -0.032, 0.02, 0, 20));
     heart.add(sphere(0.045, heartMat, 0.032, 0.02, 0, 20));
     const point = cone(0.068, 0.09, heartMat, 0, -0.035, 0, 20);
     point.rotation.x = Math.PI;
     point.scale.z = 0.7;
     heart.add(point);
-    heart.scale.setScalar(1 + Math.min(u.vitality, 8) * 0.12);
+    heart.scale.setScalar(0.55 + mastery(u.vitality) * 0.75);
     body.add(heart);
     animated.push({
       update: (t) => {
-        heart.rotation.y = Math.sin(t * 0.9) * 0.5;
+        heart.rotation.y = Math.sin(t * 0.9) * 0.12;
         const pulse = 1 + Math.max(0, Math.sin(t * 3.4)) * 0.06;
-        heart.scale.setScalar((1 + Math.min(u.vitality, 8) * 0.12) * pulse);
+        heart.scale.setScalar((0.55 + mastery(u.vitality) * 0.75) * pulse);
       },
     });
   }
@@ -618,10 +848,10 @@ function addUpgrades(body: THREE.Group, run: RunState, animated: Animated[]) {
     const orbit = new THREE.Group();
     orbit.position.set(-0.445, 0.87, 0.02);
     body.add(orbit);
-    const crystalMat = glow(C.rune, 1.4, C.rune);
+    const crystalMat = glow(C.rune, 0.5 + mastery(u.focus) * 1.1, 0x537c85);
     const crystals: THREE.Mesh[] = [];
     for (let i = 0; i < count; i++) {
-      const c = gem(0.045, crystalMat);
+      const c = gem(0.023 + mastery(u.focus) * 0.023, crystalMat);
       c.scale.y = 1.6;
       crystals.push(c);
       orbit.add(c);
@@ -639,13 +869,13 @@ function addUpgrades(body: THREE.Group, run: RunState, animated: Animated[]) {
 
   // Far Sight: a gold circlet round the hood with an amber eye gem.
   if (u.reach > 0) {
-    const circlet = ring(0.315, 0.016, metal(C.buckle, 0.25), 0, 2.07, -0.02);
+    const circlet = ring(0.184, 0.008 + mastery(u.reach) * 0.004, metal(C.buckle, 0.35 - mastery(u.reach) * 0.15), 0, 1.982, -0.02);
     circlet.scale.set(1, 1, 1.04);
     body.add(circlet);
-    const setting = sphere(0.045, metal(C.buckle, 0.25), 0, 2.07, 0.3, 16);
+    const setting = sphere(0.022 + mastery(u.reach) * 0.020, metal(C.buckle, 0.25), 0, 1.982, 0.175, 24);
     setting.scale.z = 0.5;
     body.add(setting);
-    const eye = sphere(0.03 + Math.min(u.reach, 6) * 0.005, glow(C.amber, 1 + u.reach * 0.15, C.amber), 0, 2.07, 0.325, 16);
+    const eye = gem(0.017 + mastery(u.reach) * 0.019, glow(C.amber, 0.3 + mastery(u.reach) * 0.8, C.amber), 0, 1.982, 0.187);
     body.add(eye);
     animated.push({
       update: (t) => {
@@ -657,13 +887,14 @@ function addUpgrades(body: THREE.Group, run: RunState, animated: Animated[]) {
   // Luck: clover charms swinging from the belt.
   if (u.luck > 0) {
     const count = Math.min(u.luck, 5);
-    const leafMat = glow(C.clover, 0.35, C.clover);
+    const leafMat = metal(C.clover, 0.48 - mastery(u.luck) * 0.2, { emissive: C.clover, emissiveIntensity: 0.08 + mastery(u.luck) * 0.5, metalness: 0.5 });
     const stemMat = cloth(0x2f7a4a);
     const string = metal(C.buckle, 0.3);
     const charms: THREE.Group[] = [];
     for (let i = 0; i < count; i++) {
       const x = count > 1 ? -0.16 + (i / (count - 1)) * 0.32 : 0.12;
       const charm = new THREE.Group();
+      charm.scale.setScalar(0.7 + mastery(u.luck) * 0.5);
       charm.position.set(x, 0.87, 0.27 - Math.abs(x) * 0.25);
       charm.add(cylinder(0.005, 0.005, 0.09, string, 0, -0.045, 0));
       charm.add(cylinder(0.006, 0.006, 0.05, stemMat, 0, -0.12, 0));
@@ -694,12 +925,15 @@ function addUpgrades(body: THREE.Group, run: RunState, animated: Animated[]) {
   // Strength: red bands wrapped round the sword forearm, one per level.
   if (u.strength > 0) {
     const bands = Math.min(u.strength, 4);
-    const bandMat = cloth(C.scarfDark, { roughness: 0.7 });
+    const bandMat = cloth(C.scarfDark, { roughness: 0.9 - mastery(u.strength) * 0.25,
+      color: new THREE.Color(C.scarfDark).lerp(new THREE.Color(0xa87552), mastery(u.strength) * 0.65) });
     for (let i = 0; i < bands; i++) {
-      body.add(ring(0.074, 0.016, bandMat, 0.445, 0.9 + i * 0.06, 0.02));
+      body.add(ring(0.079, 0.010 + mastery(u.strength) * 0.008, bandMat, 0.445, 0.9 + i * 0.06, 0.02));
     }
     // Bulkier upper arm past the first level.
-    const bulk = capsule(0.078 + Math.min(u.strength, 6) * 0.008, 0.22, cloth(C.tunic), 0.41, 1.31, 0);
+    const bulk = tailoredProfile([[0.06, -0.15], [0.078, -0.06],
+      [0.085 + mastery(u.strength) * 0.035, 0.06], [0.085, 0.17]], cloth(C.tunic), 0.004);
+    bulk.position.set(0.41, 1.31, 0);
     bulk.rotation.z = 0.1;
     body.add(bulk);
   }
@@ -713,7 +947,7 @@ function buildSword(tier: number, animated: Animated[]): THREE.Group {
   const named = Math.min(tier, WEAPONS.length - 1);
   const enchant = Math.max(0, tier - (WEAPONS.length - 1));
 
-  const gripMat = cloth(C.grip, { roughness: 0.6, sheen: 0.2 });
+  const gripMat = leather(C.grip);
   const hiltMat = metal(C.hilt, 0.28);
 
   const addGrip = (length: number, pommel: Mat, wraps = 4) => {
@@ -809,7 +1043,7 @@ function buildSword(tier: number, animated: Animated[]): THREE.Group {
         horn.rotation.z = -side * 0.9;
         sword.add(horn);
       }
-      const fangMat = metal(C.fang, 0.3, { emissive: new THREE.Color(C.ember), emissiveIntensity: 0.1 + enchant * 0.08 });
+      const fangMat = metal(C.fang, 0.4 - mastery(enchant) * 0.2, { emissive: new THREE.Color(C.ember), emissiveIntensity: 0.06 + mastery(enchant) * 0.4 });
       const outline = new THREE.Shape();
       outline.moveTo(-0.07, 0);
       outline.quadraticCurveTo(-0.02, 0.85, 0.28, 1.42);
@@ -819,7 +1053,7 @@ function buildSword(tier: number, animated: Animated[]): THREE.Group {
       fang.position.y = 0.1;
       sword.add(fang);
       // Ember edge along the outer curve.
-      const edgeMat = glow(C.ember, 1.2 + enchant * 0.4);
+      const edgeMat = glow(C.ember, 0.65 + mastery(enchant) * 1.2);
       const edge = new THREE.Shape();
       edge.moveTo(0.075, 0);
       edge.quadraticCurveTo(0.31, 0.7, 0.28, 1.42);
@@ -830,7 +1064,7 @@ function buildSword(tier: number, animated: Animated[]): THREE.Group {
       sword.add(edgeMesh);
       animated.push({
         update: (t) => {
-          edgeMat.emissiveIntensity = 1.2 + enchant * 0.4 + Math.sin(t * 4) * 0.35;
+          edgeMat.emissiveIntensity = 0.65 + mastery(enchant) * 1.2 + Math.sin(t * 4) * 0.15;
         },
       });
       if (enchant > 0) {
@@ -949,6 +1183,7 @@ interface Stage {
  * arch fading into the dark, two flickering torches and drifting dust.
  */
 function buildDungeon(): Stage {
+  const textureStart = textures.length;
   const group = new THREE.Group();
   const animated: Animated[] = [];
   const own: THREE.BufferGeometry[] = [];
@@ -1075,12 +1310,14 @@ function buildDungeon(): Stage {
     },
   });
 
+  const ownTextures = textures.splice(textureStart);
   return {
     group,
     animated,
     dispose() {
       for (const x of own) x.dispose();
       for (const x of mats) x.dispose();
+      for (const x of ownTextures) x.dispose();
     },
   };
 }
@@ -1107,9 +1344,9 @@ export function createHeroViewer(container: HTMLElement, run: RunState): HeroVie
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setClearColor(0x07070c, 1);
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.05;
+  renderer.toneMappingExposure = 1.08;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFShadowMap;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   const canvas = renderer.domElement;
   canvas.style.width = '100%';
   canvas.style.height = '100%';
@@ -1120,36 +1357,40 @@ export function createHeroViewer(container: HTMLElement, run: RunState): HeroVie
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(30, 1, 0.1, 50);
-  camera.position.set(0, 1.55, 6.3);
-  camera.lookAt(0, 1.3, 0);
+  camera.position.set(0, 1.55, 5.65);
+  camera.lookAt(0, 1.36, 0);
 
   // Image-based lighting gives the metals something to reflect.
   const pmrem = new THREE.PMREMGenerator(renderer);
   const envScene = new RoomEnvironment();
   const env = pmrem.fromScene(envScene, 0.04);
   scene.environment = env.texture;
-  scene.environmentIntensity = 0.4;
+  scene.environmentIntensity = 0.38;
   pmrem.dispose();
+  envScene.dispose();
 
-  scene.add(new THREE.HemisphereLight(0x6f8fb8, 0x14101c, 0.5));
-  const key = new THREE.DirectionalLight(0xffe0b8, 2.0);
-  key.position.set(2.5, 4.5, 3);
+  scene.add(new THREE.HemisphereLight(0xb5c4cf, 0x30261f, 0.45));
+  const key = new THREE.DirectionalLight(0xffe9d3, 2.7);
+  key.position.set(-2.3, 3.8, 4);
+  key.target.position.set(0, 1.5, 0);
+  scene.add(key.target);
   key.castShadow = true;
-  key.shadow.mapSize.set(1024, 1024);
+  key.shadow.mapSize.set(2048, 2048);
   key.shadow.camera.near = 1;
   key.shadow.camera.far = 12;
   key.shadow.camera.left = -1.6;
   key.shadow.camera.right = 1.6;
   key.shadow.camera.top = 3;
   key.shadow.camera.bottom = -0.5;
-  key.shadow.bias = -0.0015;
+  key.shadow.bias = -0.0002;
+  key.shadow.normalBias = 0.012;
   key.shadow.radius = 4;
   scene.add(key);
-  const rim = new THREE.DirectionalLight(0x67e8f9, 1.4);
+  const rim = new THREE.DirectionalLight(0xa7b8c6, 1.8);
   rim.position.set(-3, 2, -2.5);
   scene.add(rim);
-  const fill = new THREE.DirectionalLight(0xc83a3a, 0.45);
-  fill.position.set(-2, 1, 3);
+  const fill = new THREE.DirectionalLight(0xd3deea, 0.85);
+  fill.position.set(2, 2.2, 4);
   scene.add(fill);
 
   // The torchlit corridor the hero stands in.
@@ -1167,7 +1408,10 @@ export function createHeroViewer(container: HTMLElement, run: RunState): HeroVie
     const sig = gearSignature(next);
     if (hero && sig === signature) return;
     signature = sig;
-    if (hero) rig.remove(hero.group);
+    if (hero) {
+      rig.remove(hero.group);
+      hero.dispose();
+    }
     hero = buildHero(next);
     rig.add(hero.group);
   };
@@ -1208,6 +1452,8 @@ export function createHeroViewer(container: HTMLElement, run: RunState): HeroVie
     const h = Math.max(1, container.clientHeight);
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
+    camera.position.z = Math.max(5.65, 3.7 / camera.aspect);
+    camera.lookAt(0, 1.36, 0);
     camera.updateProjectionMatrix();
   };
   resize();
@@ -1220,7 +1466,7 @@ export function createHeroViewer(container: HTMLElement, run: RunState): HeroVie
     frame = requestAnimationFrame(loop);
     const now = performance.now();
     const t = (now - start) / 1000;
-    if (!dragging && now - idleSince > 1500) spin += 0.004;
+    if (!dragging && now - idleSince > 1500) spin += 0.0008;
     rig.rotation.y = spin;
     rig.rotation.x = tilt;
     if (hero) for (const a of hero.animated) a.update(t);
@@ -1238,9 +1484,8 @@ export function createHeroViewer(container: HTMLElement, run: RunState): HeroVie
       canvas.removeEventListener('pointermove', onMove);
       canvas.removeEventListener('pointerup', onUp);
       canvas.removeEventListener('pointercancel', onUp);
-      for (const g of geometries.splice(0)) g.dispose();
-      for (const m of materials.splice(0)) m.dispose();
-      for (const t of textures.splice(0)) t.dispose();
+      hero?.dispose();
+      key.shadow.dispose();
       env.dispose();
       stage.dispose();
       renderer.dispose();
