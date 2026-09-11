@@ -32,6 +32,9 @@ jobs:
           node-version: 24
           cache: pnpm
 
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
